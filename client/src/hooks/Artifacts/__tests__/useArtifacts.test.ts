@@ -95,15 +95,16 @@ describe('useArtifacts', () => {
       expect(result.current.currentArtifact).toBeNull();
     });
 
-    it('should return empty orderedArtifactIds when no artifacts exist', () => {
+    it('should return empty groups and versions when no artifacts exist', () => {
       (useRecoilValue as jest.Mock).mockReturnValue({});
       const { result } = renderHook(() => useArtifacts());
-      expect(result.current.orderedArtifactIds).toEqual([]);
+      expect(result.current.artifactGroups).toEqual([]);
+      expect(result.current.currentVersionIds).toEqual([]);
     });
   });
 
-  describe('artifact ordering', () => {
-    it('should order artifacts by lastUpdateTime', () => {
+  describe('artifact grouping', () => {
+    it('should place identifier-less artifacts in their own group ordered by lastUpdateTime', () => {
       const artifacts = {
         'artifact-3': createArtifact({ id: 'artifact-3', lastUpdateTime: 3000 }),
         'artifact-1': createArtifact({ id: 'artifact-1', lastUpdateTime: 1000 }),
@@ -114,7 +115,15 @@ describe('useArtifacts', () => {
 
       const { result } = renderHook(() => useArtifacts());
 
-      expect(result.current.orderedArtifactIds).toEqual(['artifact-1', 'artifact-2', 'artifact-3']);
+      expect(result.current.artifactGroups.map((group) => group.key)).toEqual([
+        'artifact-1',
+        'artifact-2',
+        'artifact-3',
+      ]);
+      /** Each identifier-less entry is its own single-version group */
+      expect(result.current.artifactGroups.every((group) => group.latestId === group.key)).toBe(
+        true,
+      );
     });
 
     it('should automatically select latest artifact', () => {
@@ -618,20 +627,21 @@ describe('useArtifacts', () => {
     });
   });
 
-  describe('currentIndex calculation', () => {
-    it('should return correct index for current artifact', () => {
+  describe('currentVersionIndex calculation', () => {
+    it('should return the version index within the current identifier group', () => {
       const artifacts = {
-        'artifact-1': createArtifact({ id: 'artifact-1', lastUpdateTime: 1000 }),
-        'artifact-2': createArtifact({ id: 'artifact-2', lastUpdateTime: 2000 }),
-        'artifact-3': createArtifact({ id: 'artifact-3', lastUpdateTime: 3000 }),
+        'doc-a-v1': createArtifact({ id: 'doc-a-v1', identifier: 'doc-a', lastUpdateTime: 1000 }),
+        'doc-a-v2': createArtifact({ id: 'doc-a-v2', identifier: 'doc-a', lastUpdateTime: 2000 }),
+        'doc-a-v3': createArtifact({ id: 'doc-a-v3', identifier: 'doc-a', lastUpdateTime: 3000 }),
       };
 
       (useRecoilValue as jest.Mock).mockReturnValue(artifacts);
-      (useRecoilState as jest.Mock).mockReturnValue(['artifact-2', mockSetCurrentArtifactId]);
+      (useRecoilState as jest.Mock).mockReturnValue(['doc-a-v2', mockSetCurrentArtifactId]);
 
       const { result } = renderHook(() => useArtifacts());
 
-      expect(result.current.currentIndex).toBe(1);
+      expect(result.current.currentVersionIndex).toBe(1);
+      expect(result.current.currentVersionIds).toEqual(['doc-a-v1', 'doc-a-v2', 'doc-a-v3']);
     });
 
     it('should return -1 for non-existent artifact', () => {
@@ -644,7 +654,97 @@ describe('useArtifacts', () => {
 
       const { result } = renderHook(() => useArtifacts());
 
-      expect(result.current.currentIndex).toBe(-1);
+      expect(result.current.currentVersionIndex).toBe(-1);
+      expect(result.current.currentVersionIds).toEqual([]);
+    });
+  });
+
+  describe('version history scoped by identifier', () => {
+    const interleaved = {
+      'a-v1': createArtifact({ id: 'a-v1', identifier: 'doc-a', lastUpdateTime: 1000 }),
+      'b-v1': createArtifact({ id: 'b-v1', identifier: 'doc-b', lastUpdateTime: 2000 }),
+      'a-v2': createArtifact({ id: 'a-v2', identifier: 'doc-a', lastUpdateTime: 3000 }),
+    };
+
+    it('should group interleaved artifacts by identifier without leaking across groups', () => {
+      (useRecoilValue as jest.Mock).mockReturnValue(interleaved);
+      (useRecoilState as jest.Mock).mockReturnValue(['a-v2', mockSetCurrentArtifactId]);
+
+      const { result } = renderHook(() => useArtifacts());
+
+      /** Two distinct artifacts, ordered by first appearance (chronological) */
+      expect(result.current.artifactGroups.map((group) => group.key)).toEqual(['doc-a', 'doc-b']);
+      /** Group A has two versions; navigation never surfaces B's entry */
+      expect(result.current.currentGroupKey).toBe('doc-a');
+      expect(result.current.currentVersionIds).toEqual(['a-v1', 'a-v2']);
+      expect(result.current.currentVersionIds).not.toContain('b-v1');
+      expect(result.current.currentVersionIndex).toBe(1);
+    });
+
+    it('should scope versions to group B when B is selected', () => {
+      (useRecoilValue as jest.Mock).mockReturnValue(interleaved);
+      (useRecoilState as jest.Mock).mockReturnValue(['b-v1', mockSetCurrentArtifactId]);
+
+      const { result } = renderHook(() => useArtifacts());
+
+      expect(result.current.currentGroupKey).toBe('doc-b');
+      expect(result.current.currentVersionIds).toEqual(['b-v1']);
+      expect(result.current.currentVersionIndex).toBe(0);
+    });
+
+    it('should expose the latest version as each group latestId for artifact switching', () => {
+      (useRecoilValue as jest.Mock).mockReturnValue(interleaved);
+      (useRecoilState as jest.Mock).mockReturnValue(['a-v1', mockSetCurrentArtifactId]);
+
+      const { result } = renderHook(() => useArtifacts());
+
+      const groupA = result.current.artifactGroups.find((group) => group.key === 'doc-a');
+      const groupB = result.current.artifactGroups.find((group) => group.key === 'doc-b');
+      /** Switching to a group opens its LATEST version */
+      expect(groupA?.latestId).toBe('a-v2');
+      expect(groupB?.latestId).toBe('b-v1');
+    });
+
+    it('should NOT collapse lc-no-identifier entries into one pseudo-group', () => {
+      const artifacts = {
+        'lc-a': createArtifact({
+          id: 'lc-a',
+          identifier: 'lc-no-identifier',
+          lastUpdateTime: 1000,
+        }),
+        'lc-b': createArtifact({
+          id: 'lc-b',
+          identifier: 'lc-no-identifier',
+          lastUpdateTime: 2000,
+        }),
+        /** Tool artifacts carry no identifier at all */
+        'tool-c': createArtifact({ id: 'tool-c', identifier: undefined, lastUpdateTime: 3000 }),
+      };
+
+      (useRecoilValue as jest.Mock).mockReturnValue(artifacts);
+      (useRecoilState as jest.Mock).mockReturnValue(['lc-a', mockSetCurrentArtifactId]);
+
+      const { result } = renderHook(() => useArtifacts());
+
+      /** Three isolated single-version groups keyed by id, not one giant group */
+      expect(result.current.artifactGroups.map((group) => group.key)).toEqual([
+        'lc-a',
+        'lc-b',
+        'tool-c',
+      ]);
+      expect(result.current.currentVersionIds).toEqual(['lc-a']);
+      expect(result.current.currentVersionIndex).toBe(0);
+    });
+
+    it('should auto-open the latest version of the newest group', () => {
+      /** No current selection so the auto-open effect fires */
+      (useRecoilValue as jest.Mock).mockReturnValue(interleaved);
+      (useRecoilState as jest.Mock).mockReturnValue([null, mockSetCurrentArtifactId]);
+
+      renderHook(() => useArtifacts());
+
+      /** Newest overall (a-v2) is group doc-a's latest version */
+      expect(mockSetCurrentArtifactId).toHaveBeenCalledWith('a-v2');
     });
   });
 
@@ -717,7 +817,8 @@ describe('useArtifacts', () => {
 
       const { result } = renderHook(() => useArtifacts());
 
-      expect(result.current.orderedArtifactIds).toEqual([]);
+      expect(result.current.artifactGroups).toEqual([]);
+      expect(result.current.currentVersionIds).toEqual([]);
       expect(result.current.currentArtifact).toBeNull();
     });
 
@@ -726,7 +827,8 @@ describe('useArtifacts', () => {
 
       const { result } = renderHook(() => useArtifacts());
 
-      expect(result.current.orderedArtifactIds).toEqual([]);
+      expect(result.current.artifactGroups).toEqual([]);
+      expect(result.current.currentVersionIds).toEqual([]);
       expect(result.current.currentArtifact).toBeNull();
     });
 

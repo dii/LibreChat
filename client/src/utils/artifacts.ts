@@ -343,6 +343,31 @@ export function isCodeOnlyArtifact(type: string | null | undefined): boolean {
 }
 
 /**
+ * Fallback identifier stamped on directive artifacts (`:::artifact`) that
+ * omit an `identifier`. Kept here so the grouping logic and the renderer
+ * that assigns it (`components/Artifacts/Artifact.tsx`) share one source
+ * of truth.
+ */
+export const NO_ARTIFACT_IDENTIFIER = 'lc-no-identifier';
+
+/**
+ * Key that buckets artifact entries into version-history groups. Entries
+ * sharing a stable `identifier` (the model reuses the prior identifier when
+ * it revises a document) form one group ordered chronologically. Entries
+ * without a usable identifier — the `lc-no-identifier` fallback or
+ * tool-produced files that carry none — must each stand alone rather than
+ * collapse into one giant pseudo-group, so they key off the unique
+ * artifact id instead.
+ */
+export function getArtifactGroupKey(artifact: Pick<Artifact, 'id' | 'identifier'>): string {
+  const identifier = artifact.identifier;
+  if (identifier == null || identifier === NO_ARTIFACT_IDENTIFIER) {
+    return artifact.id;
+  }
+  return identifier;
+}
+
+/**
  * Extension → fenced-code-block language hint for the CODE bucket. The
  * key is the lowercased file extension (no dot); the value is the
  * identifier `marked` reads off the fence (e.g. ```` ```python ```` ).

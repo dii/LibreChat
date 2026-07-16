@@ -9,6 +9,7 @@ import CopyButton from '~/components/Messages/Content/CopyButton';
 import { useShareContext, useMutationState } from '~/Providers';
 import useArtifacts from '~/hooks/Artifacts/useArtifacts';
 import DownloadArtifact from './DownloadArtifact';
+import ArtifactSwitcher from './ArtifactSwitcher';
 import ArtifactVersion from './ArtifactVersion';
 import ArtifactTabs from './ArtifactTabs';
 import { isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
@@ -87,10 +88,12 @@ export default function Artifacts() {
   const {
     activeTab,
     setActiveTab,
-    currentIndex,
     currentArtifact,
-    orderedArtifactIds,
     setCurrentArtifactId,
+    artifactGroups,
+    currentGroupKey,
+    currentVersionIds,
+    currentVersionIndex,
   } = useArtifacts();
 
   /* Office artifacts have no source view, and source-code artifacts have
@@ -316,12 +319,19 @@ export default function Artifacts() {
               {displayedTab !== 'preview' && isMutating && (
                 <RefreshCw size={16} className="animate-spin text-text-secondary" />
               )}
-              {orderedArtifactIds.length > 1 && (
+              {artifactGroups.length > 1 && (
+                <ArtifactSwitcher
+                  groups={artifactGroups}
+                  currentKey={currentGroupKey}
+                  onSelect={(latestId) => setCurrentArtifactId(latestId)}
+                />
+              )}
+              {currentVersionIds.length > 1 && (
                 <ArtifactVersion
-                  currentIndex={currentIndex}
-                  totalVersions={orderedArtifactIds.length}
+                  currentIndex={currentVersionIndex}
+                  totalVersions={currentVersionIds.length}
                   onVersionChange={(index) => {
-                    const target = orderedArtifactIds[index];
+                    const target = currentVersionIds[index];
                     if (target) {
                       setCurrentArtifactId(target);
                     }
