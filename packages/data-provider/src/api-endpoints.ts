@@ -306,6 +306,9 @@ export const revertAgentVersion = (agent_id: string) => `${agents({ path: `${age
 export const files = () => `${BASE_URL}/api/files`;
 export const fileUpload = () => `${BASE_URL}/api/files`;
 export const fileDelete = () => `${BASE_URL}/api/files`;
+/** Raw drop-folder write for the external "canvas" ingest server; bypasses the
+ *  normal file/context pipeline (content never enters model context). */
+export const canvasSource = () => `${BASE_URL}/api/files/canvas-source`;
 export const fileDownload = (userId: string, fileId: string) =>
   `${BASE_URL}/api/files/download/${userId}/${fileId}`;
 /* Deferred-preview lifecycle endpoint. Returns

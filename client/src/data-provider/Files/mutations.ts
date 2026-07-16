@@ -8,7 +8,7 @@ import {
   defaultOrderQuery,
   isAssistantsEndpoint,
 } from 'librechat-data-provider';
-import type { UseMutationResult } from '@tanstack/react-query';
+import type { UseMutationResult, UseMutationOptions } from '@tanstack/react-query';
 import type * as t from 'librechat-data-provider';
 import { useLocalize } from '~/hooks';
 
@@ -135,6 +135,20 @@ export const useUploadFileMutation = (
       );
       onSuccess?.(data, formData, context);
     },
+  });
+};
+
+/**
+ * Upload a source document into the external canvas ingest server's drop folder.
+ * Deliberately bypasses the normal file pipeline (no DB record, no context
+ * injection) — the point is that the file's content never enters model context.
+ */
+export const useUploadCanvasSourceMutation = (
+  options?: UseMutationOptions<t.TCanvasSourceUpload, unknown, FormData, unknown>,
+): UseMutationResult<t.TCanvasSourceUpload, unknown, FormData, unknown> => {
+  return useMutation([MutationKeys.canvasSourceUpload], {
+    mutationFn: (body: FormData) => dataService.uploadCanvasSource(body),
+    ...options,
   });
 };
 

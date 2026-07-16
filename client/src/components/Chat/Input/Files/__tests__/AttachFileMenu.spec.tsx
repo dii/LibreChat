@@ -21,6 +21,7 @@ jest.mock('~/hooks/Files/useSharePointFileHandling', () => ({
 
 jest.mock('~/data-provider', () => ({
   useGetStartupConfig: jest.fn(),
+  useUploadCanvasSourceMutation: jest.fn(() => ({ mutate: jest.fn() })),
 }));
 
 jest.mock('~/components/SharePoint', () => ({
@@ -95,6 +96,7 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 
 function setupMocks(overrides: { provider?: string } = {}) {
   const translations: Record<string, string> = {
+    com_ui_add_to_canvas: 'Add to canvas',
     com_files_upload_sharepoint: 'Upload from SharePoint',
     com_sidepanel_attach_files: 'Attach Files',
     com_ui_upload_code_environment: 'Upload to Code Environment',

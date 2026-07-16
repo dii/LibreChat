@@ -466,6 +466,19 @@ export const uploadFile = (data: FormData, signal?: AbortSignal | null): Promise
 };
 
 /**
+ * Upload a source document directly into the external canvas ingest server's
+ * drop folder. Deliberately bypasses the normal upload pipeline: no DB record,
+ * no file-strategy, no context injection.
+ */
+export const uploadCanvasSource = (
+  data: FormData,
+  signal?: AbortSignal | null,
+): Promise<f.TCanvasSourceUpload> => {
+  const requestConfig = signal ? { signal } : undefined;
+  return request.postMultiPart(endpoints.canvasSource(), data, requestConfig);
+};
+
+/**
  * Marks uploaded files as used (owner-scoped TTL touch) so the upload-window
  * TTL cannot reap attachments held in a client-side queue during a long run.
  * Best-effort: callers fire-and-forget — send-time marking is the backstop.

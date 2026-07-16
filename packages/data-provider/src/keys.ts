@@ -96,6 +96,7 @@ export enum MutationKeys {
   createAgentApiKey = 'createAgentApiKey',
   deleteAgentApiKey = 'deleteAgentApiKey',
   fileUpload = 'fileUpload',
+  canvasSourceUpload = 'canvasSourceUpload',
   fileDelete = 'fileDelete',
   fileUsage = 'fileUsage',
   updatePreset = 'updatePreset',

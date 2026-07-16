@@ -168,6 +168,13 @@ export type TFileUpload = TFile & {
   temp_file_id: string;
 };
 
+/** Response from `POST /api/files/canvas-source`: a raw drop-folder write that
+ *  produces no DB record, only the sanitized filename written and its size. */
+export type TCanvasSourceUpload = {
+  filename: string;
+  bytes: number;
+};
+
 /**
  * Shape returned by `GET /api/files/:file_id/preview`. The deferred-
  * preview code-execution flow polls this until status is terminal:

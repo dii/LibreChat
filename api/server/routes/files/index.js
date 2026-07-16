@@ -11,6 +11,7 @@ const { avatar: asstAvatarRouter } = require('~/server/routes/assistants/v1');
 const { avatar: agentAvatarRouter } = require('~/server/routes/agents/v1');
 const { createMulterInstance } = require('./multer');
 
+const { router: canvas } = require('./canvas');
 const files = require('./files');
 const images = require('./images');
 const avatar = require('./avatar');
@@ -59,6 +60,7 @@ const initialize = async () => {
     restoreTenantContextFromReq,
   );
 
+  router.use('/canvas-source', canvas);
   router.use('/', files);
   router.use('/images', images);
   router.use('/images/avatar', avatar);

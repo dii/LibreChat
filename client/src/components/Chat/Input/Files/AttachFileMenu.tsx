@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo, useCallback } from 'react';
 import { useRecoilState } from 'recoil';
 import * as Ariakit from '@ariakit/react';
 import {
+  FileInput,
   FileSearch,
   ImageUpIcon,
   FileType2Icon,
@@ -14,6 +15,7 @@ import {
   DropdownPopup,
   AttachmentIcon,
   SharePointIcon,
+  useToastContext,
 } from '@librechat/client';
 import {
   Providers,
@@ -40,8 +42,9 @@ import {
 } from '~/hooks';
 import { useSharePointFileHandlingNoChatContext } from '~/hooks/Files/useSharePointFileHandling';
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
+import { useGetStartupConfig, useUploadCanvasSourceMutation } from '~/data-provider';
 import { SharePointPickerDialog } from '~/components/SharePoint';
-import { useGetStartupConfig } from '~/data-provider';
+import { useOptionalChatFormContext } from '~/Providers';
 import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
 import { cn } from '~/utils';
@@ -97,8 +100,12 @@ const AttachFileMenu = ({
   conversation,
 }: AttachFileMenuProps) => {
   const localize = useLocalize();
+  const { showToast } = useToastContext();
+  const chatForm = useOptionalChatFormContext();
   const isUploadDisabled = disabled ?? false;
   const inputRef = useRef<HTMLInputElement>(null);
+  const canvasInputRef = useRef<HTMLInputElement>(null);
+  const uploadCanvasSource = useUploadCanvasSourceMutation();
   const [isPopoverActive, setIsPopoverActive] = useState(false);
   const uploadFileTooltip = useShortcutHint('uploadFile', localize('com_sidepanel_attach_files'));
   const uploadFileAriaKey = useShortcutAriaKey('uploadFile');
@@ -167,6 +174,46 @@ const AttachFileMenu = ({
       inputRef.current.accept = '';
     },
     [endpointFileConfig?.supportedMimeTypes],
+  );
+
+  const insertCanvasSourceReference = useCallback(
+    (filename: string) => {
+      if (!chatForm) {
+        return;
+      }
+      const draft = chatForm.getValues('text') ?? '';
+      const separator = draft.length > 0 && !draft.endsWith(' ') ? ' ' : '';
+      chatForm.setValue('text', `${draft}${separator}Use canvas source "${filename}". `, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    },
+    [chatForm],
+  );
+
+  const handleCanvasFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) {
+        return;
+      }
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      uploadCanvasSource.mutate(formData, {
+        onSuccess: (data) => {
+          insertCanvasSourceReference(data.filename);
+          showToast({
+            message: localize('com_ui_add_to_canvas_success', { filename: data.filename }),
+            status: 'success',
+          });
+        },
+        onError: () => {
+          showToast({ message: localize('com_ui_add_to_canvas_error'), status: 'error' });
+        },
+      });
+    },
+    [uploadCanvasSource, insertCanvasSourceReference, showToast, localize],
   );
 
   const dropdownItems = useMemo(() => {
@@ -268,6 +315,12 @@ const AttachFileMenu = ({
 
     const localItems = createMenuItems(handleUploadClick);
 
+    localItems.push({
+      label: localize('com_ui_add_to_canvas'),
+      onClick: () => canvasInputRef.current?.click(),
+      icon: <FileInput className="icon-md" />,
+    });
+
     if (sharePointEnabled) {
       const sharePointItems = createMenuItems(() => {
         setIsSharePointDialogOpen(true);
@@ -351,6 +404,13 @@ const AttachFileMenu = ({
           iconClassName="mr-0"
         />
       </FileUpload>
+      <input
+        ref={canvasInputRef}
+        type="file"
+        className="hidden"
+        aria-hidden="true"
+        onChange={handleCanvasFileChange}
+      />
       <SharePointPickerDialog
         isOpen={isSharePointDialogOpen}
         onOpenChange={setIsSharePointDialogOpen}
