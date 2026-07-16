@@ -177,13 +177,15 @@ const AttachFileMenu = ({
   );
 
   const insertCanvasSourceReference = useCallback(
-    (filename: string) => {
-      if (!chatForm) {
+    (filenames: string[]) => {
+      if (!chatForm || filenames.length === 0) {
         return;
       }
       const draft = chatForm.getValues('text') ?? '';
       const separator = draft.length > 0 && !draft.endsWith(' ') ? ' ' : '';
-      chatForm.setValue('text', `${draft}${separator}Use canvas source "${filename}". `, {
+      const noun = filenames.length === 1 ? 'source' : 'sources';
+      const quoted = filenames.map((filename) => `"${filename}"`).join(', ');
+      chatForm.setValue('text', `${draft}${separator}Use canvas ${noun} ${quoted}. `, {
         shouldDirty: true,
         shouldValidate: true,
       });
@@ -193,24 +195,41 @@ const AttachFileMenu = ({
 
   const handleCanvasFileChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
+      const selected = Array.from(event.target.files ?? []);
       event.target.value = '';
-      if (!file) {
+      if (selected.length === 0) {
         return;
       }
-      const formData = new FormData();
-      formData.append('file', file, file.name);
-      uploadCanvasSource.mutate(formData, {
-        onSuccess: (data) => {
-          insertCanvasSourceReference(data.filename);
+      /** Per-file requests keep per-file error granularity and the server's
+       *  per-file size cap; failures are collected rather than thrown. */
+      const uploads = selected.map((file) => {
+        const formData = new FormData();
+        formData.append('file', file, file.name);
+        return uploadCanvasSource.mutateAsync(formData).then(
+          (data) => ({ succeeded: true as const, filename: data.filename }),
+          () => ({ succeeded: false as const, filename: file.name }),
+        );
+      });
+      void Promise.all(uploads).then((results) => {
+        const succeeded = results.filter((r) => r.succeeded).map((r) => r.filename);
+        const failed = results.filter((r) => !r.succeeded).map((r) => r.filename);
+        insertCanvasSourceReference(succeeded);
+        if (failed.length === 0) {
           showToast({
-            message: localize('com_ui_add_to_canvas_success', { filename: data.filename }),
+            message:
+              succeeded.length === 1
+                ? localize('com_ui_add_to_canvas_success', { filename: succeeded[0] })
+                : localize('com_ui_add_to_canvas_success_multi', { count: succeeded.length }),
             status: 'success',
           });
-        },
-        onError: () => {
+        } else if (succeeded.length > 0) {
+          showToast({
+            message: localize('com_ui_add_to_canvas_partial', { filenames: failed.join(', ') }),
+            status: 'warning',
+          });
+        } else {
           showToast({ message: localize('com_ui_add_to_canvas_error'), status: 'error' });
-        },
+        }
       });
     },
     [uploadCanvasSource, insertCanvasSourceReference, showToast, localize],
@@ -407,8 +426,10 @@ const AttachFileMenu = ({
       <input
         ref={canvasInputRef}
         type="file"
+        multiple
         className="hidden"
         aria-hidden="true"
+        data-testid="canvas-source-input"
         onChange={handleCanvasFileChange}
       />
       <SharePointPickerDialog

@@ -1,6 +1,6 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { EModelEndpoint, EToolResources, Providers } from 'librechat-data-provider';
 import AttachFileMenu from '../AttachFileMenu';
@@ -19,9 +19,18 @@ jest.mock('~/hooks/Files/useSharePointFileHandling', () => ({
   useSharePointFileHandlingNoChatContext: jest.fn(),
 }));
 
-jest.mock('~/data-provider', () => ({
-  useGetStartupConfig: jest.fn(),
-  useUploadCanvasSourceMutation: jest.fn(() => ({ mutate: jest.fn() })),
+jest.mock('~/data-provider', () => {
+  const canvasMutateAsync = jest.fn();
+  return {
+    useGetStartupConfig: jest.fn(),
+    useUploadCanvasSourceMutation: jest.fn(() => ({ mutateAsync: canvasMutateAsync })),
+    __canvasMutateAsync: canvasMutateAsync,
+  };
+});
+
+jest.mock('~/Providers', () => ({
+  ...jest.requireActual('~/Providers'),
+  useOptionalChatFormContext: jest.fn(),
 }));
 
 jest.mock('~/components/SharePoint', () => ({
@@ -31,7 +40,9 @@ jest.mock('~/components/SharePoint', () => ({
 jest.mock('@librechat/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const R = require('react');
+  const showToast = jest.fn();
   return {
+    __showToast: showToast,
     FileUpload: R.forwardRef((props, ref) =>
       R.createElement(
         'div',
@@ -67,7 +78,7 @@ jest.mock('@librechat/client', () => {
       ),
     AttachmentIcon: () => R.createElement('span', { 'data-testid': 'attachment-icon' }),
     SharePointIcon: () => R.createElement('span', { 'data-testid': 'sharepoint-icon' }),
-    useToastContext: () => ({ showToast: jest.fn() }),
+    useToastContext: () => ({ showToast }),
   };
 });
 
@@ -91,12 +102,19 @@ const mockUseSharePointFileHandlingNoChatContext = jest.requireMock(
   '~/hooks/Files/useSharePointFileHandling',
 ).useSharePointFileHandlingNoChatContext;
 const mockUseGetStartupConfig = jest.requireMock('~/data-provider').useGetStartupConfig;
+const mockCanvasMutateAsync = jest.requireMock('~/data-provider').__canvasMutateAsync;
+const mockShowToast = jest.requireMock('@librechat/client').__showToast;
+const mockUseOptionalChatFormContext = jest.requireMock('~/Providers').useOptionalChatFormContext;
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 function setupMocks(overrides: { provider?: string } = {}) {
   const translations: Record<string, string> = {
     com_ui_add_to_canvas: 'Add to canvas',
+    com_ui_add_to_canvas_error: 'Failed to add source to canvas',
+    com_ui_add_to_canvas_partial: 'Some sources were not added to canvas: {{filenames}}',
+    com_ui_add_to_canvas_success: 'Added "{{filename}}" to canvas',
+    com_ui_add_to_canvas_success_multi: 'Added {{count}} sources to canvas',
     com_files_upload_sharepoint: 'Upload from SharePoint',
     com_sidepanel_attach_files: 'Attach Files',
     com_ui_upload_code_environment: 'Upload to Code Environment',
@@ -105,7 +123,17 @@ function setupMocks(overrides: { provider?: string } = {}) {
     com_ui_upload_ocr_text: 'Upload as Text',
     com_ui_upload_provider: 'Upload to Provider',
   };
-  mockUseLocalize.mockReturnValue((key: string) => translations[key] || key);
+  mockUseLocalize.mockReturnValue((key: string, options?: Record<string, string | number>) => {
+    let phrase = translations[key] || key;
+    if (options) {
+      for (const [name, value] of Object.entries(options)) {
+        phrase = phrase.replace(`{{${name}}}`, String(value));
+      }
+    }
+    return phrase;
+  });
+  mockUseOptionalChatFormContext.mockReturnValue(undefined);
+  mockCanvasMutateAsync.mockReset();
   mockUseAgentCapabilities.mockReturnValue({
     contextEnabled: false,
     fileSearchEnabled: false,
@@ -435,6 +463,110 @@ describe('AttachFileMenu', () => {
       setupMocks();
       renderMenu({ agentId: '', endpointType: EModelEndpoint.openAI });
       expect(screen.getByRole('button', { name: /attach file options/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('Add to canvas', () => {
+    const openAndPickCanvas = (): HTMLInputElement => {
+      openMenu();
+      fireEvent.click(screen.getByText('Add to canvas'));
+      return screen.getByTestId('canvas-source-input') as HTMLInputElement;
+    };
+
+    it('uploads a single file, inserts the singular sentence, and shows a success toast', async () => {
+      setupMocks();
+      const setValue = jest.fn();
+      mockUseOptionalChatFormContext.mockReturnValue({ getValues: jest.fn(() => ''), setValue });
+      mockCanvasMutateAsync.mockResolvedValueOnce({ filename: 'a.md', bytes: 1 });
+      renderMenu();
+      const input = openAndPickCanvas();
+      fireEvent.change(input, { target: { files: [new File(['a'], 'a.md')] } });
+      await waitFor(() => expect(mockCanvasMutateAsync).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(setValue).toHaveBeenCalledWith(
+          'text',
+          'Use canvas source "a.md". ',
+          expect.objectContaining({ shouldDirty: true }),
+        ),
+      );
+      expect(mockShowToast).toHaveBeenCalledWith({
+        message: 'Added "a.md" to canvas',
+        status: 'success',
+      });
+    });
+
+    it('uploads each selected file and inserts one combined sentence', async () => {
+      setupMocks();
+      const setValue = jest.fn();
+      mockUseOptionalChatFormContext.mockReturnValue({ getValues: jest.fn(() => ''), setValue });
+      mockCanvasMutateAsync
+        .mockResolvedValueOnce({ filename: 'a.md', bytes: 1 })
+        .mockResolvedValueOnce({ filename: 'b.md', bytes: 2 });
+      renderMenu();
+      const input = openAndPickCanvas();
+      fireEvent.change(input, {
+        target: { files: [new File(['a'], 'a.md'), new File(['b'], 'b.md')] },
+      });
+      await waitFor(() => expect(mockCanvasMutateAsync).toHaveBeenCalledTimes(2));
+      const firstUpload = mockCanvasMutateAsync.mock.calls[0][0] as FormData;
+      const secondUpload = mockCanvasMutateAsync.mock.calls[1][0] as FormData;
+      expect((firstUpload.get('file') as File).name).toBe('a.md');
+      expect((secondUpload.get('file') as File).name).toBe('b.md');
+      await waitFor(() =>
+        expect(setValue).toHaveBeenCalledWith(
+          'text',
+          'Use canvas sources "a.md", "b.md". ',
+          expect.objectContaining({ shouldDirty: true }),
+        ),
+      );
+      expect(mockShowToast).toHaveBeenCalledWith({
+        message: 'Added 2 sources to canvas',
+        status: 'success',
+      });
+    });
+
+    it('inserts only successes and shows a warning naming the failed file on partial failure', async () => {
+      setupMocks();
+      const setValue = jest.fn();
+      mockUseOptionalChatFormContext.mockReturnValue({ getValues: jest.fn(() => ''), setValue });
+      mockCanvasMutateAsync
+        .mockResolvedValueOnce({ filename: 'a.md', bytes: 1 })
+        .mockRejectedValueOnce(new Error('boom'));
+      renderMenu();
+      const input = openAndPickCanvas();
+      fireEvent.change(input, {
+        target: { files: [new File(['a'], 'a.md'), new File(['b'], 'b.md')] },
+      });
+      await waitFor(() =>
+        expect(mockShowToast).toHaveBeenCalledWith({
+          message: 'Some sources were not added to canvas: b.md',
+          status: 'warning',
+        }),
+      );
+      expect(setValue).toHaveBeenCalledWith(
+        'text',
+        'Use canvas source "a.md". ',
+        expect.objectContaining({ shouldDirty: true }),
+      );
+    });
+
+    it('shows an error toast and inserts nothing when all uploads fail', async () => {
+      setupMocks();
+      const setValue = jest.fn();
+      mockUseOptionalChatFormContext.mockReturnValue({ getValues: jest.fn(() => ''), setValue });
+      mockCanvasMutateAsync.mockRejectedValue(new Error('boom'));
+      renderMenu();
+      const input = openAndPickCanvas();
+      fireEvent.change(input, {
+        target: { files: [new File(['a'], 'a.md'), new File(['b'], 'b.md')] },
+      });
+      await waitFor(() =>
+        expect(mockShowToast).toHaveBeenCalledWith({
+          message: 'Failed to add source to canvas',
+          status: 'error',
+        }),
+      );
+      expect(setValue).not.toHaveBeenCalled();
     });
   });
 });
