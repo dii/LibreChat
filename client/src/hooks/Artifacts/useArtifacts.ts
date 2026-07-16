@@ -1,10 +1,21 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { Constants } from 'librechat-data-provider';
 import { useRecoilState, useRecoilValue, useResetRecoilState } from 'recoil';
-import { isCodeOnlyArtifact } from '~/utils/artifacts';
+import { isCodeOnlyArtifact, getArtifactGroupKey } from '~/utils/artifacts';
 import { useArtifactsContext } from '~/Providers';
 import { logger } from '~/utils';
 import store from '~/store';
+
+/**
+ * One version-history group in the artifacts panel: all entries that share
+ * an artifact `identifier`. `latestId` points at the newest version, which
+ * is what artifact-level switching (the group dropdown) opens.
+ */
+export interface ArtifactGroup {
+  key: string;
+  latestId: string;
+  title?: string;
+}
 
 type ArtifactFence = {
   marker: string;
@@ -145,17 +156,56 @@ export default function useArtifacts() {
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
   const [currentArtifactId, setCurrentArtifactId] = useRecoilState(store.currentArtifactId);
 
-  const { orderedArtifactIds, latestAutoOpenArtifactId } = useMemo(() => {
-    const ids = Object.keys(artifacts ?? {}).sort(
-      (a, b) => (artifacts?.[a]?.lastUpdateTime ?? 0) - (artifacts?.[b]?.lastUpdateTime ?? 0),
+  const {
+    orderedArtifactIds,
+    latestAutoOpenArtifactId,
+    artifactGroups,
+    versionIdsByGroupKey,
+    groupKeyByArtifactId,
+  } = useMemo(() => {
+    const source = artifacts ?? {};
+    const ids = Object.keys(source).sort(
+      (a, b) => (source[a]?.lastUpdateTime ?? 0) - (source[b]?.lastUpdateTime ?? 0),
     );
-    for (let i = ids.length - 1; i >= 0; i--) {
+
+    const versionIdsByGroupKey = new Map<string, string[]>();
+    const groupKeyByArtifactId = new Map<string, string>();
+    const groupOrder: string[] = [];
+    let latestAutoOpenArtifactId: string | null = null;
+
+    for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
-      if (!isCodeOnlyArtifact(artifacts?.[id]?.type)) {
-        return { orderedArtifactIds: ids, latestAutoOpenArtifactId: id };
+      const artifact = source[id];
+      if (artifact == null) {
+        continue;
+      }
+      const groupKey = getArtifactGroupKey({ id, identifier: artifact.identifier });
+      groupKeyByArtifactId.set(id, groupKey);
+      const versions = versionIdsByGroupKey.get(groupKey);
+      if (versions == null) {
+        versionIdsByGroupKey.set(groupKey, [id]);
+        groupOrder.push(groupKey);
+      } else {
+        versions.push(id);
+      }
+      if (!isCodeOnlyArtifact(artifact.type)) {
+        latestAutoOpenArtifactId = id;
       }
     }
-    return { orderedArtifactIds: ids, latestAutoOpenArtifactId: null };
+
+    const artifactGroups: ArtifactGroup[] = groupOrder.map((key) => {
+      const versionIds = versionIdsByGroupKey.get(key) ?? [];
+      const latestId = versionIds[versionIds.length - 1];
+      return { key, latestId, title: source[latestId]?.title };
+    });
+
+    return {
+      orderedArtifactIds: ids,
+      latestAutoOpenArtifactId,
+      artifactGroups,
+      versionIdsByGroupKey,
+      groupKeyByArtifactId,
+    };
   }, [artifacts]);
 
   const prevIsSubmittingRef = useRef<boolean>(false);
@@ -283,14 +333,21 @@ export default function useArtifacts() {
 
   const currentArtifact = currentArtifactId != null ? artifacts?.[currentArtifactId] : null;
 
-  const currentIndex = orderedArtifactIds.indexOf(currentArtifactId ?? '');
+  const currentGroupKey =
+    currentArtifactId != null ? (groupKeyByArtifactId.get(currentArtifactId) ?? null) : null;
+  const currentVersionIds =
+    currentGroupKey != null ? (versionIdsByGroupKey.get(currentGroupKey) ?? []) : [];
+  const currentVersionIndex =
+    currentArtifactId != null ? currentVersionIds.indexOf(currentArtifactId) : -1;
 
   return {
     activeTab,
     setActiveTab,
-    currentIndex,
     currentArtifact,
-    orderedArtifactIds,
     setCurrentArtifactId,
+    artifactGroups,
+    currentGroupKey,
+    currentVersionIds,
+    currentVersionIndex,
   };
 }

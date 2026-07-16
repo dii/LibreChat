@@ -7,6 +7,7 @@ import type { Pluggable } from 'unified';
 import type { Artifact } from '~/common';
 import { useMessageContext, useArtifactContext } from '~/Providers';
 import { logger, extractContent, isArtifactRoute } from '~/utils';
+import { NO_ARTIFACT_IDENTIFIER } from '~/utils/artifacts';
 import { artifactsState } from '~/store/artifacts';
 import ArtifactButton from './ArtifactButton';
 
@@ -37,7 +38,7 @@ export const artifactPlugin: Pluggable = () => {
 
 const defaultTitle = 'untitled';
 const defaultType = 'unknown';
-const defaultIdentifier = 'lc-no-identifier';
+const defaultIdentifier = NO_ARTIFACT_IDENTIFIER;
 
 export function Artifact({
   node: _node,
