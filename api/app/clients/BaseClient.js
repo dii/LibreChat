@@ -6,12 +6,16 @@ const {
   checkBalance,
   getBalanceConfig,
   buildMessageFiles,
+  resolveArtifactEdits,
+  ARTIFACT_EDIT_START,
   sanitizeFileForTransmit,
   extractFileContext,
   getReferencedQuotes,
   encodeAndFormatAudios,
   encodeAndFormatVideos,
+  collectPriorArtifactTexts,
   encodeAndFormatDocuments,
+  resolveArtifactEditsInContent,
 } = require('@librechat/api');
 const {
   Constants,
@@ -753,6 +757,26 @@ class BaseClient {
       }
     } else if (Array.isArray(completion)) {
       responseMessage.text = completion.join('');
+    }
+
+    if (
+      typeof responseMessage.text === 'string' &&
+      responseMessage.text.includes(ARTIFACT_EDIT_START)
+    ) {
+      responseMessage.text = resolveArtifactEdits({
+        priorText: collectPriorArtifactTexts(this.currentMessages),
+        text: responseMessage.text,
+      }).text;
+    } else if (
+      Array.isArray(responseMessage.content) &&
+      responseMessage.content.some(
+        (part) => part?.type === 'text' && part.text?.includes?.(ARTIFACT_EDIT_START),
+      )
+    ) {
+      responseMessage.content = resolveArtifactEditsInContent({
+        priorText: collectPriorArtifactTexts(this.currentMessages),
+        content: responseMessage.content,
+      }).content;
     }
 
     if (tokenCountMap && this.recordTokenUsage && this.getTokenCountForResponse) {

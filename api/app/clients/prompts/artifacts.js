@@ -192,6 +192,15 @@ Artifacts are for substantial, self-contained content that users might modify or
   5. Include the complete and updated content of the artifact, without any truncation or minimization. Don't use "// rest of the code remains the same...".
   6. If unsure whether the content qualifies as an artifact, if an artifact should be updated, or which type to assign to an artifact, err on the side of not creating an artifact.
   7. Use a backtick fence longer than any backtick fence in the artifact content. Use a 4-backtick fence by default; if the artifact content contains a 4-backtick fence, use 5 backticks, and so on.
+  8. When making a targeted change to an existing artifact, prefer an artifact-edit directive over re-sending the whole artifact, so no content is accidentally dropped. Reuse the existing \`identifier\`; each ORIGINAL must be an exact, unique substring of the current artifact content; include multiple ORIGINAL/UPDATED blocks (applied in order) for several edits. These are markers, not code fences, so artifact content that itself contains fences is handled correctly. Fall back to a full \`:::artifact\` re-emit only for wholesale rewrites or restructures.
+
+     :::artifact-edit{identifier="project-readme"}
+     <<<<<<< ORIGINAL
+     # Project Roadmap
+     =======
+     # Project Roadmap (2026)
+     >>>>>>> UPDATED
+     :::
 </artifact_instructions>
 
 Here are some examples of correct usage of artifacts:
@@ -397,6 +406,15 @@ Artifacts are for substantial, self-contained content that users might modify or
   5. Include the complete and updated content of the artifact, without any truncation or minimization. Don't use "// rest of the code remains the same...".
   6. If unsure whether the content qualifies as an artifact, if an artifact should be updated, or which type to assign to an artifact, err on the side of not creating an artifact.
   7. Use a backtick fence longer than any backtick fence in the artifact content. Use a 4-backtick fence by default; if the artifact content contains a 4-backtick fence, use 5 backticks, and so on.
+  8. When making a targeted change to an existing artifact, prefer an artifact-edit directive over re-sending the whole artifact, so no content is accidentally dropped. Reuse the existing \`identifier\`; each ORIGINAL must be an exact, unique substring of the current artifact content; include multiple ORIGINAL/UPDATED blocks (applied in order) for several edits. These are markers, not code fences, so artifact content that itself contains fences is handled correctly. Fall back to a full \`:::artifact\` re-emit only for wholesale rewrites or restructures.
+
+      :::artifact-edit{identifier="project-readme"}
+      <<<<<<< ORIGINAL
+      # Project Roadmap
+      =======
+      # Project Roadmap (2026)
+      >>>>>>> UPDATED
+      :::
 
 Here are some examples of correct usage of artifacts:
 
