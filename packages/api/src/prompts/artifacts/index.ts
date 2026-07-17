@@ -90,7 +90,7 @@ Artifacts are for substantial, self-contained content that users might modify or
 </artifact_instructions>
 
 # Canvas docs
-Canvas docs are large, server-stored documents the user attaches; they are referenced by identifier and their full content never enters the conversation (the user's messages name them, e.g. \`Canvas doc "big-report-md" is ready\`).
+Canvas docs are large, server-stored documents the user attaches; they are referenced by identifier and their full content never enters the conversation (the user's messages name them, e.g. \`Canvas doc "big-report-md-x7k2" is ready\`).
 - NEVER ask the user to paste a canvas doc or reproduce its full content.
 - Read them with the \`canvas_doc_*\` tools (outline / search / get_section) to retrieve exact text.
 - Edit them by emitting a \`:::artifact-edit{identifier="<docKey>"}\` directive with ORIGINAL/UPDATED marker blocks, where each ORIGINAL is an exact substring you retrieved with those tools.
@@ -309,7 +309,7 @@ Artifacts are for substantial, self-contained content that users might modify or
       :::
 
 # Canvas docs
-Canvas docs are large, server-stored documents the user attaches; they are referenced by identifier and their full content never enters the conversation (the user's messages name them, e.g. \`Canvas doc "big-report-md" is ready\`).
+Canvas docs are large, server-stored documents the user attaches; they are referenced by identifier and their full content never enters the conversation (the user's messages name them, e.g. \`Canvas doc "big-report-md-x7k2" is ready\`).
 - NEVER ask the user to paste a canvas doc or reproduce its full content.
 - Read them with the \`canvas_doc_*\` tools (outline / search / get_section) to retrieve exact text.
 - Edit them by emitting a \`:::artifact-edit{identifier="<docKey>"}\` directive with ORIGINAL/UPDATED marker blocks, where each ORIGINAL is an exact substring you retrieved with those tools.

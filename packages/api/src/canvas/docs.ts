@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 export const CANVAS_DOC_TYPE = 'text/markdown';
 
@@ -24,6 +25,12 @@ export type CanvasDocEditResult =
   | { status: 'applied'; version: number; oldContent: string; newContent: string }
   | { status: 'notfound' }
   | { status: 'nomatch' };
+
+export type CanvasDocUpsertResult = {
+  docKey: string;
+  version: number;
+  created: boolean;
+};
 
 const isValidUserId = (userId: string): boolean => USER_ID_PATTERN.test(userId);
 
@@ -56,42 +63,38 @@ const versionPath = (dir: string, version: number): string => path.join(dir, `v$
 
 const parseMeta = (raw: string): CanvasDocMeta => JSON.parse(raw) as CanvasDocMeta;
 
-/**
- * Creates (or replaces) a canvas doc at version 1 for a user. The docKey is the
- * slug of the sanitized filename and doubles as the artifact identifier.
- */
-export const createDoc = async ({
-  baseDir,
-  userId,
-  filename,
-  content,
-}: {
-  baseDir: string;
-  userId: string;
-  filename: string;
-  content: Buffer | string;
-}): Promise<CanvasDocMeta> => {
-  if (!isValidUserId(userId)) {
-    throw new Error('invalid user');
-  }
-  const docKey = slugifyDocKey(filename);
-  if (!docKey) {
-    throw new Error('invalid filename');
-  }
-  const dir = docDir(baseDir, userId, docKey);
-  await fs.promises.mkdir(dir, { recursive: true });
-  const now = new Date().toISOString();
-  const meta: CanvasDocMeta = {
-    identifier: docKey,
-    title: filename,
-    type: CANVAS_DOC_TYPE,
-    currentVersion: 1,
-    createdAt: now,
-    updatedAt: now,
-  };
-  await fs.promises.writeFile(versionPath(dir, 1), content);
+const randomKeySuffix = (): string =>
+  Array.from(crypto.randomBytes(4), (byte) => (byte % 36).toString(36)).join('');
+
+const writeVersionAndMeta = async (
+  dir: string,
+  version: number,
+  content: Buffer | string,
+  meta: CanvasDocMeta,
+): Promise<void> => {
+  await fs.promises.writeFile(versionPath(dir, version), content);
   await fs.promises.writeFile(metaPath(dir), JSON.stringify(meta, null, 2));
-  return meta;
+};
+
+/**
+ * Claims a fresh, unique doc directory under the user's docs root. The docKey
+ * is the filename slug plus a random 4-char base36 suffix, so identity is
+ * independent of the filename and never reused; a colliding suffix is
+ * regenerated (the non-recursive mkdir doubles as the atomic collision check).
+ */
+const claimDocDir = async (baseDir: string, userId: string, slug: string): Promise<string> => {
+  await fs.promises.mkdir(docsRoot(baseDir, userId), { recursive: true });
+  for (;;) {
+    const docKey = `${slug}-${randomKeySuffix()}`;
+    try {
+      await fs.promises.mkdir(docDir(baseDir, userId, docKey));
+      return docKey;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error;
+      }
+    }
+  }
 };
 
 /** Reads a canvas doc's metadata, or `null` when the key is invalid or absent. */
@@ -164,6 +167,63 @@ export const listDocs = async ({
   }
   const metas = await Promise.all(entries.map((docKey) => getDocMeta({ baseDir, userId, docKey })));
   return metas.filter((meta): meta is CanvasDocMeta => meta !== null);
+};
+
+/**
+ * Creates a canvas doc, or appends a new version to an existing one. Docs whose
+ * `meta.title` exactly matches the uploaded filename are versioned (the most
+ * recently updated one receives `v(currentVersion+1).md` — never a downward
+ * reset, prior versions stay intact); otherwise a new doc is created at v1
+ * under a fresh unique docKey.
+ */
+export const createOrVersionDoc = async ({
+  baseDir,
+  userId,
+  filename,
+  content,
+}: {
+  baseDir: string;
+  userId: string;
+  filename: string;
+  content: Buffer | string;
+}): Promise<CanvasDocUpsertResult> => {
+  if (!isValidUserId(userId)) {
+    throw new Error('invalid user');
+  }
+  const slug = slugifyDocKey(filename);
+  if (!slug) {
+    throw new Error('invalid filename');
+  }
+
+  const existing = (await listDocs({ baseDir, userId }))
+    .filter((meta) => meta.title === filename)
+    .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  const latest = existing[existing.length - 1];
+
+  if (latest) {
+    const dir = docDir(baseDir, userId, latest.identifier);
+    const nextVersion = latest.currentVersion + 1;
+    const updatedMeta: CanvasDocMeta = {
+      ...latest,
+      currentVersion: nextVersion,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeVersionAndMeta(dir, nextVersion, content, updatedMeta);
+    return { docKey: latest.identifier, version: nextVersion, created: false };
+  }
+
+  const docKey = await claimDocDir(baseDir, userId, slug);
+  const now = new Date().toISOString();
+  const meta: CanvasDocMeta = {
+    identifier: docKey,
+    title: filename,
+    type: CANVAS_DOC_TYPE,
+    currentVersion: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await writeVersionAndMeta(docDir(baseDir, userId, docKey), 1, content, meta);
+  return { docKey, version: 1, created: true };
 };
 
 const applyBlocks = (content: string, blocks: CanvasDocEditBlock[]): string | null => {

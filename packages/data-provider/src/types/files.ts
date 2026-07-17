@@ -170,13 +170,15 @@ export type TFileUpload = TFile & {
 
 /** Response from `POST /api/files/canvas-source`: the upload is stored as a
  *  versioned, server-side canvas doc (no DB record, never placed in context).
- *  Returns the sanitized filename, its size, the doc's identifier (`docKey`),
- *  and the created version. */
+ *  A re-upload of the same filename appends a new version to the existing doc
+ *  (`created: false`); otherwise a new doc is created under a fresh unique
+ *  `docKey` (`created: true`, `version: 1`). */
 export type TCanvasSourceUpload = {
   filename: string;
   bytes: number;
   docKey: string;
   version: number;
+  created: boolean;
 };
 
 /**
