@@ -56,6 +56,10 @@ type FileUploadType =
   | 'image_document_extended'
   | 'image_document_video_audio';
 
+type CanvasUploadResult =
+  | { succeeded: true; filename: string; docKey: string; version: number }
+  | { succeeded: false; filename: string };
+
 /** What each provider upload path can actually send, used to scope the picker filter to selectable files. */
 const fileTypeCapabilities: Record<FileUploadType, MimeUploadCapability> = {
   image: { categories: ['image'] },
@@ -176,16 +180,19 @@ const AttachFileMenu = ({
     [endpointFileConfig?.supportedMimeTypes],
   );
 
-  const insertCanvasSourceReference = useCallback(
-    (filenames: string[]) => {
-      if (!chatForm || filenames.length === 0) {
+  const insertCanvasDocReference = useCallback(
+    (docs: { docKey: string; version: number }[]) => {
+      if (!chatForm || docs.length === 0) {
         return;
       }
       const draft = chatForm.getValues('text') ?? '';
       const separator = draft.length > 0 && !draft.endsWith(' ') ? ' ' : '';
-      const noun = filenames.length === 1 ? 'source' : 'sources';
-      const quoted = filenames.map((filename) => `"${filename}"`).join(', ');
-      chatForm.setValue('text', `${draft}${separator}Use canvas ${noun} ${quoted}. `, {
+      const quoted = docs.map((doc) => `"${doc.docKey}"`).join(', ');
+      const sentence =
+        docs.length === 1
+          ? `Canvas doc ${quoted} is ready (v${docs[0].version}). `
+          : `Canvas docs ${quoted} are ready (v${docs[0].version}). `;
+      chatForm.setValue('text', `${draft}${separator}${sentence}`, {
         shouldDirty: true,
         shouldValidate: true,
       });
@@ -206,19 +213,30 @@ const AttachFileMenu = ({
         const formData = new FormData();
         formData.append('file', file, file.name);
         return uploadCanvasSource.mutateAsync(formData).then(
-          (data) => ({ succeeded: true as const, filename: data.filename }),
-          () => ({ succeeded: false as const, filename: file.name }),
+          (data): CanvasUploadResult => ({
+            succeeded: true,
+            filename: data.filename,
+            docKey: data.docKey,
+            version: data.version,
+          }),
+          (): CanvasUploadResult => ({ succeeded: false, filename: file.name }),
         );
       });
       void Promise.all(uploads).then((results) => {
-        const succeeded = results.filter((r) => r.succeeded).map((r) => r.filename);
-        const failed = results.filter((r) => !r.succeeded).map((r) => r.filename);
-        insertCanvasSourceReference(succeeded);
+        const succeeded = results.filter(
+          (result): result is Extract<CanvasUploadResult, { succeeded: true }> => result.succeeded,
+        );
+        const failed = results
+          .filter((result) => !result.succeeded)
+          .map((result) => result.filename);
+        insertCanvasDocReference(
+          succeeded.map((result) => ({ docKey: result.docKey, version: result.version })),
+        );
         if (failed.length === 0) {
           showToast({
             message:
               succeeded.length === 1
-                ? localize('com_ui_add_to_canvas_success', { filename: succeeded[0] })
+                ? localize('com_ui_add_to_canvas_success', { filename: succeeded[0].filename })
                 : localize('com_ui_add_to_canvas_success_multi', { count: succeeded.length }),
             status: 'success',
           });
@@ -232,7 +250,7 @@ const AttachFileMenu = ({
         }
       });
     },
-    [uploadCanvasSource, insertCanvasSourceReference, showToast, localize],
+    [uploadCanvasSource, insertCanvasDocReference, showToast, localize],
   );
 
   const dropdownItems = useMemo(() => {

@@ -1,8 +1,8 @@
-const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const express = require('express');
 const { logger } = require('@librechat/data-schemas');
+const { createDoc, slugifyDocKey } = require('@librechat/api');
 
 const MAX_CANVAS_SOURCE_BYTES = 100 * 1024 * 1024;
 const DISALLOWED_FILENAME_CHARS = /[^A-Za-z0-9._ -]/g;
@@ -50,18 +50,25 @@ const handleCanvasSourceUpload = async (req, res) => {
   }
 
   const filename = sanitizeCanvasFilename(req.file.originalname);
-  if (!filename) {
+  if (!filename || !slugifyDocKey(filename)) {
     return res.status(400).json({ error: 'invalid filename' });
   }
 
   try {
-    const userDir = path.join(process.env.CANVAS_SOURCES_DIR, userId);
-    await fs.promises.mkdir(userDir, { recursive: true });
-    const destination = path.join(userDir, filename);
-    await fs.promises.writeFile(destination, req.file.buffer);
-    return res.status(200).json({ filename, bytes: req.file.size });
+    const meta = await createDoc({
+      baseDir: process.env.CANVAS_SOURCES_DIR,
+      userId,
+      filename,
+      content: req.file.buffer,
+    });
+    return res.status(200).json({
+      filename,
+      bytes: req.file.size,
+      docKey: meta.identifier,
+      version: meta.currentVersion,
+    });
   } catch (error) {
-    logger.error('[/files/canvas-source] Failed to write canvas source', error);
+    logger.error('[/files/canvas-source] Failed to create canvas doc', error);
     return res.status(500).json({ error: 'failed to write canvas source' });
   }
 };

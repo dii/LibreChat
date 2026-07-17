@@ -168,11 +168,15 @@ export type TFileUpload = TFile & {
   temp_file_id: string;
 };
 
-/** Response from `POST /api/files/canvas-source`: a raw drop-folder write that
- *  produces no DB record, only the sanitized filename written and its size. */
+/** Response from `POST /api/files/canvas-source`: the upload is stored as a
+ *  versioned, server-side canvas doc (no DB record, never placed in context).
+ *  Returns the sanitized filename, its size, the doc's identifier (`docKey`),
+ *  and the created version. */
 export type TCanvasSourceUpload = {
   filename: string;
   bytes: number;
+  docKey: string;
+  version: number;
 };
 
 /**
