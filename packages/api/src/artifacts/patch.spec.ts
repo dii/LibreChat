@@ -334,8 +334,8 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
     expect(result.failed).toBe(0);
     expect(result.text).toContain(`**Canvas doc \`${docKey}\` updated to v2.**`);
     expect(result.text).toContain('```diff');
-    expect(result.text).toContain('- bravo');
-    expect(result.text).toContain('+ BRAVO');
+    expect(result.text).toContain('-bravo');
+    expect(result.text).toContain('+BRAVO');
     expect(result.text).not.toContain(':::artifact-edit');
 
     const meta = await getDocMeta({ baseDir, userId, docKey });
