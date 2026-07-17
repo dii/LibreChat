@@ -321,8 +321,8 @@ const formatDocDiff = (blocks: MarkerBlock[]): string =>
     .map((block) => `${toDiffLines(block.original, '-')}\n${toDiffLines(block.updated, '+')}`)
     .join('\n');
 
-const docConfirmation = (identifier: string, version: number, blocks: MarkerBlock[]): string =>
-  `**Canvas doc \`${identifier}\` updated to v${version}.**\n\n\`\`\`diff\n${formatDocDiff(blocks)}\n\`\`\``;
+const docConfirmation = (identifier: string, version: number, diffText: string): string =>
+  `**Canvas doc \`${identifier}\` updated to v${version}.**\n\n\`\`\`diff\n${diffText}\n\`\`\``;
 
 const resolveDocEdit = (
   canvasDocs: CanvasDocsContext,
@@ -390,7 +390,8 @@ export const resolveArtifactEditsWithDocs = async ({
     } else {
       const outcome = await resolveDocEdit(canvasDocs, directive.identifier, directive.blocks);
       if (outcome.status === 'applied') {
-        result += docConfirmation(directive.identifier ?? '', outcome.version, directive.blocks);
+        const diffText = outcome.diff ?? formatDocDiff(directive.blocks);
+        result += docConfirmation(directive.identifier ?? '', outcome.version, diffText);
         applied++;
       } else if (outcome.status === 'nomatch') {
         result +=
