@@ -1,6 +1,8 @@
 export * from './app';
 /* Artifacts */
 export * from './artifacts';
+/* Canvas docs */
+export * from './canvas';
 /* Admin */
 export * from './admin';
 export * from './cdn';

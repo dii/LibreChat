@@ -1,4 +1,6 @@
 import { ARTIFACT_START, ARTIFACT_END, findAllArtifacts, replaceArtifactContent } from './update';
+import { applyDocEdit } from '../canvas/docs';
+import type { CanvasDocEditResult } from '../canvas/docs';
 
 export const ARTIFACT_EDIT_START = ':::artifact-edit';
 const ORIGINAL_MARKER = '<<<<<<< ORIGINAL';
@@ -299,6 +301,162 @@ export const resolveArtifactEditsInContent = ({
     priorTexts.push(resolved.text);
     return { ...part, text: resolved.text };
   });
+
+  return { content: nextContent, applied, failed };
+};
+
+export type CanvasDocsContext = {
+  baseDir: string;
+  userId: string;
+};
+
+const toDiffLines = (value: string, marker: '-' | '+'): string =>
+  value
+    .split('\n')
+    .map((line) => `${marker} ${line}`)
+    .join('\n');
+
+const formatDocDiff = (blocks: MarkerBlock[]): string =>
+  blocks
+    .map((block) => `${toDiffLines(block.original, '-')}\n${toDiffLines(block.updated, '+')}`)
+    .join('\n');
+
+const docConfirmation = (identifier: string, version: number, blocks: MarkerBlock[]): string =>
+  `**Canvas doc \`${identifier}\` updated to v${version}.**\n\n\`\`\`diff\n${formatDocDiff(blocks)}\n\`\`\``;
+
+const resolveDocEdit = (
+  canvasDocs: CanvasDocsContext,
+  identifier: string | null,
+  blocks: MarkerBlock[],
+): Promise<CanvasDocEditResult> => {
+  if (!identifier) {
+    return Promise.resolve({ status: 'notfound' });
+  }
+  return applyDocEdit({
+    baseDir: canvasDocs.baseDir,
+    userId: canvasDocs.userId,
+    docKey: identifier,
+    blocks,
+  });
+};
+
+/**
+ * Doc-aware variant of {@link resolveArtifactEdits}. In-message artifacts keep
+ * precedence; only when no prior artifact matches a directive's identifier does
+ * it fall back to the requesting user's server-stored canvas docs (never in
+ * context). A doc hit is applied via `applyDocEdit` and the directive is
+ * replaced with a confirmation plus a fenced diff; misses fail loud in place.
+ * With no `canvasDocs` it is exactly {@link resolveArtifactEdits}.
+ */
+export const resolveArtifactEditsWithDocs = async ({
+  priorText,
+  text,
+  canvasDocs,
+}: {
+  priorText: string[];
+  text: string;
+  canvasDocs?: CanvasDocsContext;
+}): Promise<ResolveResult> => {
+  if (!canvasDocs || !text.includes(ARTIFACT_EDIT_START)) {
+    return resolveArtifactEdits({ priorText, text });
+  }
+
+  const directives = parseArtifactEdits(text);
+  if (directives.length === 0) {
+    return { text, applied: 0, failed: 0 };
+  }
+
+  let result = '';
+  let cursor = 0;
+  let applied = 0;
+  let failed = 0;
+
+  for (const directive of directives) {
+    result += text.slice(cursor, directive.start);
+    const rawDirective = text.slice(directive.start, directive.end);
+    const source = findSourceArtifact(result, priorText, directive.identifier);
+
+    if (source) {
+      const patched = applyMarkerBlocks(source, directive.blocks);
+      if (patched === null) {
+        result +=
+          rawDirective +
+          editFailure('original content not found in artifact', directive.identifier);
+        failed++;
+      } else {
+        result += patched;
+        applied++;
+      }
+    } else {
+      const outcome = await resolveDocEdit(canvasDocs, directive.identifier, directive.blocks);
+      if (outcome.status === 'applied') {
+        result += docConfirmation(directive.identifier ?? '', outcome.version, directive.blocks);
+        applied++;
+      } else if (outcome.status === 'nomatch') {
+        result +=
+          rawDirective +
+          editFailure('original content not found in canvas doc', directive.identifier);
+        failed++;
+      } else {
+        result +=
+          rawDirective + editFailure('no artifact found with identifier', directive.identifier);
+        failed++;
+      }
+    }
+
+    cursor = directive.end;
+  }
+
+  result += text.slice(cursor);
+  return { text: result, applied, failed };
+};
+
+/**
+ * Doc-aware variant of {@link resolveArtifactEditsInContent}, threading resolved
+ * parts as prior context for later parts. With no `canvasDocs` it is exactly
+ * {@link resolveArtifactEditsInContent}.
+ */
+export const resolveArtifactEditsInContentWithDocs = async ({
+  priorText,
+  content,
+  canvasDocs,
+}: {
+  priorText: string[];
+  content: TextPart[];
+  canvasDocs?: CanvasDocsContext;
+}): Promise<ContentResult> => {
+  if (!canvasDocs) {
+    return resolveArtifactEditsInContent({ priorText, content });
+  }
+
+  let applied = 0;
+  let failed = 0;
+  const priorTexts = [...priorText];
+  const nextContent: TextPart[] = [];
+
+  for (const part of content) {
+    if (part?.type !== 'text' || typeof part.text !== 'string') {
+      nextContent.push(part);
+      continue;
+    }
+    if (!part.text.includes(ARTIFACT_EDIT_START)) {
+      if (part.text.includes(ARTIFACT_START)) {
+        priorTexts.push(part.text);
+      }
+      nextContent.push(part);
+      continue;
+    }
+
+    const resolved = await resolveArtifactEditsWithDocs({
+      priorText: priorTexts,
+      text: part.text,
+      canvasDocs,
+    });
+    applied += resolved.applied;
+    failed += resolved.failed;
+    priorTexts.push(resolved.text);
+    nextContent.push({ ...part, text: resolved.text });
+  }
 
   return { content: nextContent, applied, failed };
 };

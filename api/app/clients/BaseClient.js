@@ -6,7 +6,6 @@ const {
   checkBalance,
   getBalanceConfig,
   buildMessageFiles,
-  resolveArtifactEdits,
   ARTIFACT_EDIT_START,
   sanitizeFileForTransmit,
   extractFileContext,
@@ -15,7 +14,8 @@ const {
   encodeAndFormatVideos,
   collectPriorArtifactTexts,
   encodeAndFormatDocuments,
-  resolveArtifactEditsInContent,
+  resolveArtifactEditsWithDocs,
+  resolveArtifactEditsInContentWithDocs,
 } = require('@librechat/api');
 const {
   Constants,
@@ -547,6 +547,21 @@ class BaseClient {
     };
   }
 
+  /**
+   * Builds the per-user canvas-docs context for artifact-edit resolution, or
+   * `undefined` when the drop-folder volume is unconfigured or the user id is
+   * unavailable (in which case resolution stays in-message only).
+   * @returns {{ baseDir: string, userId: string } | undefined}
+   */
+  getCanvasDocsContext() {
+    const baseDir = process.env.CANVAS_SOURCES_DIR;
+    const userId = this.options?.req?.user?.id ?? this.user;
+    if (!baseDir || typeof userId !== 'string') {
+      return undefined;
+    }
+    return { baseDir, userId };
+  }
+
   async sendMessage(message, opts = {}) {
     const appConfig = this.options.req?.config;
     /** @type {Promise<TMessage>} */
@@ -759,24 +774,31 @@ class BaseClient {
       responseMessage.text = completion.join('');
     }
 
+    const canvasDocs = this.getCanvasDocsContext();
     if (
       typeof responseMessage.text === 'string' &&
       responseMessage.text.includes(ARTIFACT_EDIT_START)
     ) {
-      responseMessage.text = resolveArtifactEdits({
-        priorText: collectPriorArtifactTexts(this.currentMessages),
-        text: responseMessage.text,
-      }).text;
+      responseMessage.text = (
+        await resolveArtifactEditsWithDocs({
+          priorText: collectPriorArtifactTexts(this.currentMessages),
+          text: responseMessage.text,
+          canvasDocs,
+        })
+      ).text;
     } else if (
       Array.isArray(responseMessage.content) &&
       responseMessage.content.some(
         (part) => part?.type === 'text' && part.text?.includes?.(ARTIFACT_EDIT_START),
       )
     ) {
-      responseMessage.content = resolveArtifactEditsInContent({
-        priorText: collectPriorArtifactTexts(this.currentMessages),
-        content: responseMessage.content,
-      }).content;
+      responseMessage.content = (
+        await resolveArtifactEditsInContentWithDocs({
+          priorText: collectPriorArtifactTexts(this.currentMessages),
+          content: responseMessage.content,
+          canvasDocs,
+        })
+      ).content;
     }
 
     if (tokenCountMap && this.recordTokenUsage && this.getTokenCountForResponse) {
