@@ -56,9 +56,16 @@ type FileUploadType =
   | 'image_document_extended'
   | 'image_document_video_audio';
 
+type CanvasDocOutcome = { docKey: string; version: number; created: boolean };
+
 type CanvasUploadResult =
-  | { succeeded: true; filename: string; docKey: string; version: number }
+  | ({ succeeded: true; filename: string } & CanvasDocOutcome)
   | { succeeded: false; filename: string };
+
+const canvasDocClause = (doc: CanvasDocOutcome): string =>
+  doc.created
+    ? `"${doc.docKey}" is ready (v${doc.version})`
+    : `"${doc.docKey}" updated to v${doc.version}`;
 
 /** What each provider upload path can actually send, used to scope the picker filter to selectable files. */
 const fileTypeCapabilities: Record<FileUploadType, MimeUploadCapability> = {
@@ -181,17 +188,15 @@ const AttachFileMenu = ({
   );
 
   const insertCanvasDocReference = useCallback(
-    (docs: { docKey: string; version: number }[]) => {
+    (docs: CanvasDocOutcome[]) => {
       if (!chatForm || docs.length === 0) {
         return;
       }
       const draft = chatForm.getValues('text') ?? '';
       const separator = draft.length > 0 && !draft.endsWith(' ') ? ' ' : '';
-      const quoted = docs.map((doc) => `"${doc.docKey}"`).join(', ');
+      const clauses = docs.map(canvasDocClause);
       const sentence =
-        docs.length === 1
-          ? `Canvas doc ${quoted} is ready (v${docs[0].version}). `
-          : `Canvas docs ${quoted} are ready (v${docs[0].version}). `;
+        docs.length === 1 ? `Canvas doc ${clauses[0]}. ` : `Canvas docs: ${clauses.join(', ')}. `;
       chatForm.setValue('text', `${draft}${separator}${sentence}`, {
         shouldDirty: true,
         shouldValidate: true,
@@ -218,6 +223,7 @@ const AttachFileMenu = ({
             filename: data.filename,
             docKey: data.docKey,
             version: data.version,
+            created: data.created,
           }),
           (): CanvasUploadResult => ({ succeeded: false, filename: file.name }),
         );
@@ -229,9 +235,7 @@ const AttachFileMenu = ({
         const failed = results
           .filter((result) => !result.succeeded)
           .map((result) => result.filename);
-        insertCanvasDocReference(
-          succeeded.map((result) => ({ docKey: result.docKey, version: result.version })),
-        );
+        insertCanvasDocReference(succeeded);
         if (failed.length === 0) {
           showToast({
             message:

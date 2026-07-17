@@ -480,8 +480,9 @@ describe('AttachFileMenu', () => {
       mockCanvasMutateAsync.mockResolvedValueOnce({
         filename: 'a.md',
         bytes: 1,
-        docKey: 'a-md',
+        docKey: 'a-md-1a2b',
         version: 1,
+        created: true,
       });
       renderMenu();
       const input = openAndPickCanvas();
@@ -490,7 +491,7 @@ describe('AttachFileMenu', () => {
       await waitFor(() =>
         expect(setValue).toHaveBeenCalledWith(
           'text',
-          'Canvas doc "a-md" is ready (v1). ',
+          'Canvas doc "a-md-1a2b" is ready (v1). ',
           expect.objectContaining({ shouldDirty: true }),
         ),
       );
@@ -505,8 +506,20 @@ describe('AttachFileMenu', () => {
       const setValue = jest.fn();
       mockUseOptionalChatFormContext.mockReturnValue({ getValues: jest.fn(() => ''), setValue });
       mockCanvasMutateAsync
-        .mockResolvedValueOnce({ filename: 'a.md', bytes: 1, docKey: 'a-md', version: 1 })
-        .mockResolvedValueOnce({ filename: 'b.md', bytes: 2, docKey: 'b-md', version: 1 });
+        .mockResolvedValueOnce({
+          filename: 'a.md',
+          bytes: 1,
+          docKey: 'a-md-1a2b',
+          version: 1,
+          created: true,
+        })
+        .mockResolvedValueOnce({
+          filename: 'b.md',
+          bytes: 2,
+          docKey: 'b-md-3c4d',
+          version: 3,
+          created: false,
+        });
       renderMenu();
       const input = openAndPickCanvas();
       fireEvent.change(input, {
@@ -520,7 +533,7 @@ describe('AttachFileMenu', () => {
       await waitFor(() =>
         expect(setValue).toHaveBeenCalledWith(
           'text',
-          'Canvas docs "a-md", "b-md" are ready (v1). ',
+          'Canvas docs: "a-md-1a2b" is ready (v1), "b-md-3c4d" updated to v3. ',
           expect.objectContaining({ shouldDirty: true }),
         ),
       );
@@ -535,7 +548,13 @@ describe('AttachFileMenu', () => {
       const setValue = jest.fn();
       mockUseOptionalChatFormContext.mockReturnValue({ getValues: jest.fn(() => ''), setValue });
       mockCanvasMutateAsync
-        .mockResolvedValueOnce({ filename: 'a.md', bytes: 1, docKey: 'a-md', version: 1 })
+        .mockResolvedValueOnce({
+          filename: 'a.md',
+          bytes: 1,
+          docKey: 'a-md-1a2b',
+          version: 2,
+          created: false,
+        })
         .mockRejectedValueOnce(new Error('boom'));
       renderMenu();
       const input = openAndPickCanvas();
@@ -550,7 +569,7 @@ describe('AttachFileMenu', () => {
       );
       expect(setValue).toHaveBeenCalledWith(
         'text',
-        'Canvas doc "a-md" is ready (v1). ',
+        'Canvas doc "a-md-1a2b" updated to v2. ',
         expect.objectContaining({ shouldDirty: true }),
       );
     });

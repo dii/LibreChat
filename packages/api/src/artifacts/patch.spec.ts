@@ -9,7 +9,7 @@ import {
   resolveArtifactEditsWithDocs,
   resolveArtifactEditsInContentWithDocs,
 } from './patch';
-import { createDoc, getDocMeta } from '../canvas/docs';
+import { createOrVersionDoc, getDocMeta } from '../canvas/docs';
 
 type ArtifactOptions = {
   type?: string;
@@ -307,6 +307,11 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
+  const seedDoc = async (filename: string, content: string, uid = userId): Promise<string> => {
+    const { docKey } = await createOrVersionDoc({ baseDir, userId: uid, filename, content });
+    return docKey;
+  };
+
   test('without canvasDocs it behaves exactly like resolveArtifactEdits', async () => {
     const text = edit('doc-md', [block('a', 'b')]);
     const withDocs = await resolveArtifactEditsWithDocs({ priorText: [], text });
@@ -316,8 +321,8 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
   });
 
   test('falls back to a canvas doc, bumps the version, and emits a diff', async () => {
-    await createDoc({ baseDir, userId, filename: 'doc.md', content: 'alpha\nbravo\ncharlie' });
-    const text = `Applying your change:\n\n${edit('doc-md', [block('bravo', 'BRAVO')])}`;
+    const docKey = await seedDoc('doc.md', 'alpha\nbravo\ncharlie');
+    const text = `Applying your change:\n\n${edit(docKey, [block('bravo', 'BRAVO')])}`;
 
     const result = await resolveArtifactEditsWithDocs({
       priorText: [],
@@ -327,20 +332,20 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
 
     expect(result.applied).toBe(1);
     expect(result.failed).toBe(0);
-    expect(result.text).toContain('**Canvas doc `doc-md` updated to v2.**');
+    expect(result.text).toContain(`**Canvas doc \`${docKey}\` updated to v2.**`);
     expect(result.text).toContain('```diff');
     expect(result.text).toContain('- bravo');
     expect(result.text).toContain('+ BRAVO');
     expect(result.text).not.toContain(':::artifact-edit');
 
-    const meta = await getDocMeta({ baseDir, userId, docKey: 'doc-md' });
+    const meta = await getDocMeta({ baseDir, userId, docKey });
     expect(meta?.currentVersion).toBe(2);
   });
 
   test('in-message artifacts take precedence over a same-identifier doc', async () => {
-    await createDoc({ baseDir, userId, filename: 'doc.md', content: 'from-doc' });
-    const priorText = [artifact('doc-md', 'in-message')];
-    const text = edit('doc-md', [block('in-message', 'edited-in-message')]);
+    const docKey = await seedDoc('doc.md', 'from-doc');
+    const priorText = [artifact(docKey, 'in-message')];
+    const text = edit(docKey, [block('in-message', 'edited-in-message')]);
 
     const result = await resolveArtifactEditsWithDocs({
       priorText,
@@ -349,11 +354,11 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
     });
 
     expect(result.applied).toBe(1);
-    expect(result.text).toContain(':::artifact{identifier="doc-md"');
+    expect(result.text).toContain(`:::artifact{identifier="${docKey}"`);
     expect(result.text).toContain('edited-in-message');
     expect(result.text).not.toContain('Canvas doc');
 
-    const meta = await getDocMeta({ baseDir, userId, docKey: 'doc-md' });
+    const meta = await getDocMeta({ baseDir, userId, docKey });
     expect(meta?.currentVersion).toBe(1);
   });
 
@@ -373,8 +378,8 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
   });
 
   test('a doc that exists but has no matching ORIGINAL fails loud', async () => {
-    await createDoc({ baseDir, userId, filename: 'doc.md', content: 'hello world' });
-    const text = edit('doc-md', [block('absent', 'x')]);
+    const docKey = await seedDoc('doc.md', 'hello world');
+    const text = edit(docKey, [block('absent', 'x')]);
 
     const result = await resolveArtifactEditsWithDocs({
       priorText: [],
@@ -384,13 +389,13 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
 
     expect(result.failed).toBe(1);
     expect(result.text).toContain('original content not found in canvas doc');
-    const meta = await getDocMeta({ baseDir, userId, docKey: 'doc-md' });
+    const meta = await getDocMeta({ baseDir, userId, docKey });
     expect(meta?.currentVersion).toBe(1);
   });
 
   test('per-user isolation: one user’s directive cannot edit another user’s doc', async () => {
-    await createDoc({ baseDir, userId: 'userBBBB', filename: 'secret.md', content: 'top secret' });
-    const text = edit('secret-md', [block('top secret', 'leaked')]);
+    const docKey = await seedDoc('secret.md', 'top secret', 'userBBBB');
+    const text = edit(docKey, [block('top secret', 'leaked')]);
 
     const result = await resolveArtifactEditsWithDocs({
       priorText: [],
@@ -400,15 +405,15 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
 
     expect(result.failed).toBe(1);
     expect(result.text).toContain('no artifact found with identifier');
-    const meta = await getDocMeta({ baseDir, userId: 'userBBBB', docKey: 'secret-md' });
+    const meta = await getDocMeta({ baseDir, userId: 'userBBBB', docKey });
     expect(meta?.currentVersion).toBe(1);
   });
 
   test('content variant resolves a doc edit within a text part', async () => {
-    await createDoc({ baseDir, userId, filename: 'doc.md', content: 'one two' });
+    const docKey = await seedDoc('doc.md', 'one two');
     const content = [
       { type: 'text', text: 'here goes' },
-      { type: 'text', text: edit('doc-md', [block('two', 'TWO')]) },
+      { type: 'text', text: edit(docKey, [block('two', 'TWO')]) },
     ];
 
     const result = await resolveArtifactEditsInContentWithDocs({
@@ -418,8 +423,8 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
     });
 
     expect(result.applied).toBe(1);
-    expect(result.content[1].text).toContain('**Canvas doc `doc-md` updated to v2.**');
-    const meta = await getDocMeta({ baseDir, userId, docKey: 'doc-md' });
+    expect(result.content[1].text).toContain(`**Canvas doc \`${docKey}\` updated to v2.**`);
+    const meta = await getDocMeta({ baseDir, userId, docKey });
     expect(meta?.currentVersion).toBe(2);
   });
 });
