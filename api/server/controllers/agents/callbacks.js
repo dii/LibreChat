@@ -788,11 +788,20 @@ function createToolEndCallback({ req, res, artifactPromises, streamId = null }) 
       );
     }
 
-    if (output.artifact.content) {
-      /** @type {FormattedContent[]} */
-      const content = output.artifact.content;
-      for (let i = 0; i < content.length; i++) {
-        const part = content[i];
+    // `content` images are re-fed to the model AND shown; `imageDisplay` images
+    // were marked user-audience (MCP `audience`) by formatToolContent — shown to
+    // the user but withheld from the model context (ADR-0016). Save/stream both;
+    // content parts keep any pre-assigned file_id by index, display parts don't.
+    const imageParts = [
+      ...(Array.isArray(output.artifact.content)
+        ? output.artifact.content.map((part, i) => [part, output.artifact.file_ids?.[i]])
+        : []),
+      ...(Array.isArray(output.artifact.imageDisplay)
+        ? output.artifact.imageDisplay.map((part) => [part, undefined])
+        : []),
+    ];
+    if (imageParts.length > 0) {
+      for (const [part, file_id] of imageParts) {
         if (!part) {
           continue;
         }
@@ -803,7 +812,6 @@ function createToolEndCallback({ req, res, artifactPromises, streamId = null }) 
         artifactPromises.push(
           (async () => {
             const filename = `${output.name}_img_${nanoid()}`;
-            const file_id = output.artifact.file_ids?.[i];
             const file = await saveBase64Image(url, {
               req,
               file_id,
@@ -1047,11 +1055,20 @@ function createResponsesToolEndCallback({ req, res, tracker, artifactPromises })
       );
     }
 
-    if (output.artifact.content) {
-      /** @type {FormattedContent[]} */
-      const content = output.artifact.content;
-      for (let i = 0; i < content.length; i++) {
-        const part = content[i];
+    // `content` images are re-fed to the model AND shown; `imageDisplay` images
+    // were marked user-audience (MCP `audience`) by formatToolContent — shown to
+    // the user but withheld from the model context (ADR-0016). Save/stream both;
+    // content parts keep any pre-assigned file_id by index, display parts don't.
+    const imageParts = [
+      ...(Array.isArray(output.artifact.content)
+        ? output.artifact.content.map((part, i) => [part, output.artifact.file_ids?.[i]])
+        : []),
+      ...(Array.isArray(output.artifact.imageDisplay)
+        ? output.artifact.imageDisplay.map((part) => [part, undefined])
+        : []),
+    ];
+    if (imageParts.length > 0) {
+      for (const [part, file_id] of imageParts) {
         if (!part) {
           continue;
         }
@@ -1062,7 +1079,6 @@ function createResponsesToolEndCallback({ req, res, tracker, artifactPromises })
         artifactPromises.push(
           (async () => {
             const filename = `${output.name}_img_${nanoid()}`;
-            const file_id = output.artifact.file_ids?.[i];
             const file = await saveBase64Image(url, {
               req,
               file_id,

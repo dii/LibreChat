@@ -504,4 +504,71 @@ describe('formatToolContent', () => {
       expect(artifacts).toBeUndefined();
     });
   });
+
+  describe('audience routing (ADR-0016)', () => {
+    const img = (audience?: Array<'user' | 'assistant'>): t.ToolContentPart =>
+      ({
+        type: 'image',
+        data: 'aW1n',
+        mimeType: 'image/png',
+        ...(audience ? { annotations: { audience } } : {}),
+      }) as t.ToolContentPart;
+
+    const dataUrl = { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n' } };
+
+    it('routes user-only-audience images to imageDisplay, withheld from content', () => {
+      const result: t.MCPToolCallResponse = { content: [img(['user'])] };
+      const [content, artifacts] = formatToolContent(result, 'openai');
+      expect(content).toBe('');
+      expect(artifacts?.content).toBeUndefined();
+      expect(artifacts?.imageDisplay).toEqual([dataUrl]);
+    });
+
+    it('keeps images in content when audience includes assistant', () => {
+      const result: t.MCPToolCallResponse = { content: [img(['user', 'assistant'])] };
+      const [, artifacts] = formatToolContent(result, 'openai');
+      expect(artifacts?.content).toEqual([dataUrl]);
+      expect(artifacts?.imageDisplay).toBeUndefined();
+    });
+
+    it('keeps images in content for assistant-only audience', () => {
+      const result: t.MCPToolCallResponse = { content: [img(['assistant'])] };
+      const [, artifacts] = formatToolContent(result, 'openai');
+      expect(artifacts?.content).toEqual([dataUrl]);
+      expect(artifacts?.imageDisplay).toBeUndefined();
+    });
+
+    it('keeps images in content when no audience is set (backward compatible)', () => {
+      const result: t.MCPToolCallResponse = { content: [img()] };
+      const [, artifacts] = formatToolContent(result, 'openai');
+      expect(artifacts?.content).toEqual([dataUrl]);
+      expect(artifacts?.imageDisplay).toBeUndefined();
+    });
+
+    it('splits a mixed batch: model-fed to content, user-only to imageDisplay', () => {
+      const result: t.MCPToolCallResponse = {
+        content: [img(), img(['user'])],
+      };
+      const [, artifacts] = formatToolContent(result, 'openai');
+      expect(artifacts?.content).toEqual([dataUrl]);
+      expect(artifacts?.imageDisplay).toEqual([dataUrl]);
+    });
+
+    it('passes the assistant-audience text handle through as fed content', () => {
+      const result: t.MCPToolCallResponse = {
+        content: [
+          img(['user']),
+          {
+            type: 'text',
+            text: 'image handle img_ab12cd34',
+            annotations: { audience: ['assistant'] },
+          } as t.ToolContentPart,
+        ],
+      };
+      const [content, artifacts] = formatToolContent(result, 'openai');
+      expect(content).toBe('image handle img_ab12cd34');
+      expect(artifacts?.content).toBeUndefined();
+      expect(artifacts?.imageDisplay).toEqual([dataUrl]);
+    });
+  });
 });

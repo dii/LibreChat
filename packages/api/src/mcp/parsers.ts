@@ -94,6 +94,17 @@ function isImageContent(item: t.ToolContentPart): item is t.ImageContent {
   return item.type === 'image';
 }
 
+/**
+ * True when the content's MCP `audience` annotation is set and does NOT include
+ * "assistant" — i.e. the tool declared it is for the user only. Such content is
+ * shown to the user but withheld from the model context (ADR-0016). Unset or
+ * assistant-inclusive audience returns false (default: fed to the model).
+ */
+function isUserAudienceOnly(item: t.ToolContentPart): boolean {
+  const audience = item.annotations?.audience;
+  return Array.isArray(audience) && audience.length > 0 && !audience.includes('assistant');
+}
+
 function parseAsString(result: t.MCPToolCallResponse): string {
   const content = result?.content ?? [];
   if (!content.length) {
@@ -152,6 +163,10 @@ export function formatToolContent(
   }
 
   const imageUrls: t.FormattedContent[] = [];
+  // Images the tool annotated as user-audience (MCP `audience` excludes
+  // "assistant"): shown to the user but withheld from the model context. See
+  // `isUserAudienceOnly` and ADR-0016.
+  const displayImageUrls: t.FormattedContent[] = [];
   const uiResources: UIResource[] = [];
   let currentTextBlock = '';
 
@@ -175,7 +190,7 @@ export function formatToolContent(
       const formattedImage = formatter(item);
 
       if (formattedImage.type === 'image_url') {
-        imageUrls.push(formattedImage);
+        (isUserAudienceOnly(item) ? displayImageUrls : imageUrls).push(formattedImage);
       }
     },
 
@@ -241,6 +256,10 @@ UI Resource Markers Available:
   let artifacts: t.Artifacts = undefined;
   if (imageUrls.length > 0) {
     artifacts = { content: imageUrls };
+  }
+
+  if (displayImageUrls.length > 0) {
+    artifacts = { ...artifacts, imageDisplay: displayImageUrls };
   }
 
   if (uiResources.length > 0) {

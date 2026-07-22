@@ -126,6 +126,12 @@ export type FileSearchSource = {
 export type Artifacts =
   | {
       content?: FormattedContent[];
+      /**
+       * Images the tool marked as user-audience via the MCP `audience`
+       * annotation: shown to the user but withheld from the model context
+       * (unlike `content`, which is re-fed). See parsers.ts + ADR-0016.
+       */
+      imageDisplay?: FormattedContent[];
       [Tools.ui_resources]?: {
         data: UIResource[];
       };
