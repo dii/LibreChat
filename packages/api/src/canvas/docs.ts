@@ -15,7 +15,12 @@ const INDEX_FILE = `${CANVAS_DIR}/index.json`;
 const AUTHOR_EMAIL = 'canvas@localhost';
 const DEFAULT_BRANCH = 'main';
 
-type Provenance = 'canvas-init' | 'canvas-upload' | 'canvas-model-edit' | 'canvas-migrate';
+type Provenance =
+  | 'canvas-init'
+  | 'canvas-upload'
+  | 'canvas-model-edit'
+  | 'canvas-migrate'
+  | 'canvas-delete';
 
 export type CanvasDocMeta = {
   identifier: string;
@@ -74,6 +79,11 @@ export type CanvasDocUpsertResult = {
   version: number;
   created: boolean;
 };
+
+export type CanvasDocDeleteResult =
+  | { status: 'deleted'; docKey: string; title: string }
+  | { status: 'notfound' }
+  | { status: 'mismatch'; actual: string };
 
 const isValidUserId = (userId: string): boolean => USER_ID_PATTERN.test(userId);
 
@@ -603,5 +613,65 @@ export const applyDocEdit = async ({
     await commit(dir, [entry.path, INDEX_FILE], `model-edit: ${docKey}`, 'canvas-model-edit');
     const diff = await extractCommitDiff(dir, entry.path);
     return { status: 'applied', version, oldContent, newContent, diff };
+  });
+};
+
+/**
+ * Hard-deletes a canvas doc: drops its `.canvas/index.json` entry, removes its
+ * working-tree file, and records the removal as a single `canvas-delete` commit
+ * (`git.remove` stages only the index, so the working file is unlinked
+ * explicitly first). "Hard" means gone from the index, the working tree, and
+ * HEAD — the doc's prior versions remain recoverable from git history, so the
+ * repo is never rewritten. Returns `notfound` when the doc does not exist for
+ * the user, and `mismatch` when `expectedTitle` is supplied and does not equal
+ * the stored title (an optimistic-concurrency guard so a stale listing cannot
+ * delete the wrong doc). Runs under the per-user lock, like the other mutators.
+ */
+export const deleteDoc = async ({
+  baseDir,
+  userId,
+  docKey,
+  expectedTitle,
+}: {
+  baseDir: string;
+  userId: string;
+  docKey: string;
+  expectedTitle?: string;
+}): Promise<CanvasDocDeleteResult> => {
+  if (!isValidUserId(userId) || !isValidDocKey(docKey)) {
+    return { status: 'notfound' };
+  }
+  const dir = docsRoot(baseDir, userId);
+
+  return withUserLock(userId, async () => {
+    if (!(await repoExists(dir))) {
+      if ((await findLegacyDocs(dir)).length === 0) {
+        return { status: 'notfound' };
+      }
+      await ensureRepo(dir);
+    }
+
+    const index = await readIndex(dir);
+    const entry = index[docKey];
+    if (!entry) {
+      return { status: 'notfound' };
+    }
+    if (typeof expectedTitle === 'string' && expectedTitle !== entry.title) {
+      return { status: 'mismatch', actual: entry.title };
+    }
+
+    const { path: relPath, title } = entry;
+    delete index[docKey];
+    await writeIndex(dir, index);
+    await fs.promises.rm(path.join(dir, relPath), { force: true });
+    await git.remove({ fs, dir, filepath: relPath });
+    await git.add({ fs, dir, filepath: INDEX_FILE });
+    await git.commit({
+      fs,
+      dir,
+      message: `delete: ${docKey} (${title})`,
+      author: author('canvas-delete'),
+    });
+    return { status: 'deleted', docKey, title };
   });
 };

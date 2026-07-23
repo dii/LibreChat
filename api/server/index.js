@@ -287,6 +287,9 @@ const startServer = async () => {
   app.use('/api/config', preAuthTenantMiddleware, optionalJwtAuth, routes.config);
   app.use('/api/assistants', routes.assistants);
   app.use('/api/files', await routes.files.initialize());
+  // Service-token-guarded canvas admin (e.g. doc delete from the canvas MCP);
+  // deliberately outside the requireJwtAuth chain since the caller holds no JWT.
+  app.use('/api/canvas-admin', routes.canvasAdmin);
   app.use('/images/', createValidateImageRequest(appConfig.secureImageLinks), routes.staticRoute);
   app.use('/api/share', preAuthTenantMiddleware, routes.share);
   app.use('/api/roles', routes.roles);

@@ -36,10 +36,12 @@ const keys = require('./keys');
 const user = require('./user');
 const mcp = require('./mcp');
 const rum = require('./rum');
+const canvasAdmin = require('./canvasAdmin');
 
 module.exports = {
   rum,
   mcp,
+  canvasAdmin,
   auth,
   adminAuth,
   adminConfig,

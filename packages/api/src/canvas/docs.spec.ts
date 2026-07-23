@@ -9,6 +9,7 @@ import {
   listDocs,
   readDocVersion,
   applyDocEdit,
+  deleteDoc,
   slugifyDocKey,
   isValidDocKey,
 } from './docs';
@@ -347,6 +348,67 @@ describe('canvas doc store (git-backed)', () => {
     const v1 = await readDocVersion({ baseDir, userId, docKey: a.docKey, version: 1 });
     const v2 = await readDocVersion({ baseDir, userId, docKey: a.docKey, version: 2 });
     expect([v1, v2].sort()).toEqual(['from-a', 'from-b'].sort());
+  });
+
+  test('deleteDoc removes the index entry and working file and commits canvas-delete', async () => {
+    const keep = await seedDoc('keep.md', 'keep me');
+    const docKey = await seedDoc('gone.md', 'delete me');
+    const relPath = entryOf(docKey).path;
+
+    const result = await deleteDoc({ baseDir, userId, docKey });
+
+    expect(result).toEqual({ status: 'deleted', docKey, title: 'gone.md' });
+    expect(readIndex()[docKey]).toBeUndefined();
+    expect(fs.existsSync(path.join(repoDir(), relPath as string))).toBe(false);
+    expect(await getDocMeta({ baseDir, userId, docKey })).toBeNull();
+    expect((await listDocs({ baseDir, userId })).map((m) => m.identifier)).toEqual([keep]);
+
+    const log = await git.log({ fs, dir: repoDir() });
+    expect(log[0].commit.author.name).toBe('canvas-delete');
+    expect(log[0].commit.message).toContain(`delete: ${docKey}`);
+  });
+
+  test('deleteDoc keeps the deleted doc recoverable from git history', async () => {
+    const docKey = await seedDoc('gone.md', 'v1 body');
+    await createOrVersionDoc({ baseDir, userId, filename: 'gone.md', content: 'v2 body' });
+    const relPath = entryOf(docKey).path as string;
+
+    await deleteDoc({ baseDir, userId, docKey });
+
+    const log = await git.log({ fs, dir: repoDir() });
+    const parent = log[0].commit.parent[0];
+    const { blob } = await git.readBlob({ fs, dir: repoDir(), oid: parent, filepath: relPath });
+    expect(Buffer.from(blob).toString('utf8')).toBe('v2 body');
+  });
+
+  test('deleteDoc honors expectedTitle as an optimistic-concurrency guard', async () => {
+    const docKey = await seedDoc('report.md', 'body');
+
+    const mismatch = await deleteDoc({ baseDir, userId, docKey, expectedTitle: 'stale.md' });
+    expect(mismatch).toEqual({ status: 'mismatch', actual: 'report.md' });
+    expect(readIndex()[docKey]).toBeDefined();
+
+    const ok = await deleteDoc({ baseDir, userId, docKey, expectedTitle: 'report.md' });
+    expect(ok.status).toBe('deleted');
+    expect(readIndex()[docKey]).toBeUndefined();
+  });
+
+  test('deleteDoc returns notfound for unknown/unsafe keys and users with no repo', async () => {
+    await seedDoc('real.md', 'exists');
+    expect((await deleteDoc({ baseDir, userId, docKey: 'missing' })).status).toBe('notfound');
+    expect((await deleteDoc({ baseDir, userId, docKey: '../../etc' })).status).toBe('notfound');
+    const ghost = await deleteDoc({ baseDir, userId: 'nobody12', docKey: 'ghost-1234' });
+    expect(ghost.status).toBe('notfound');
+    expect(fs.existsSync(path.join(baseDir, 'nobody12'))).toBe(false);
+  });
+
+  test('per-user isolation: one user cannot delete another user’s doc', async () => {
+    const docKey = await seedDoc('secret.md', 'top secret', 'userBBBB');
+
+    const result = await deleteDoc({ baseDir, userId: 'userAAAA', docKey });
+
+    expect(result.status).toBe('notfound');
+    expect(workingFile(docKey, 'userBBBB')).toBe('top secret');
   });
 });
 
