@@ -14,7 +14,10 @@ const {
   encodeAndFormatVideos,
   collectPriorArtifactTexts,
   encodeAndFormatDocuments,
+  traceIdForMessage,
+  isLangfuseTraceSampled,
   resolveArtifactEditsWithDocs,
+  getLangfuseTraceDestinationIds,
   resolveArtifactEditsInContentWithDocs,
 } = require('@librechat/api');
 const {
@@ -393,6 +396,7 @@ class BaseClient {
       parentMessageId,
       responseMessageId,
     } = await this.setMessageOptions(opts);
+    this.options.startupTelemetry?.mark('history_loaded');
 
     const userMessage = opts.isEdited
       ? this.currentMessages[this.currentMessages.length - 2]
@@ -629,6 +633,7 @@ class BaseClient {
       this.getBuildMessagesOptions(opts),
       opts,
     );
+    this.options.startupTelemetry?.mark('messages_built');
 
     if (tokenCountMap && tokenCountMap[userMessage.messageId]) {
       userMessage.tokenCount = tokenCountMap[userMessage.messageId];
@@ -729,12 +734,25 @@ class BaseClient {
       this.abortController.requestCompleted = true;
     }
 
+    const isAgentResponse = isAgentsEndpoint(this.options.endpoint);
+    const langfuseTraceId = isAgentResponse ? traceIdForMessage(responseMessageId) : undefined;
+    const langfuseSampled =
+      langfuseTraceId != null ? isLangfuseTraceSampled(langfuseTraceId) : undefined;
+
     /** @type {TMessage} */
     const responseMessage = {
       messageId: responseMessageId,
       conversationId,
       parentMessageId: userMessage.messageId,
       isCreatedByUser: false,
+      ...(isAgentResponse && {
+        langfuseSampled,
+        langfuseDestinationIds: await getLangfuseTraceDestinationIds(
+          appConfig,
+          langfuseTraceId,
+          langfuseSampled,
+        ),
+      }),
       isEdited,
       model: this.getResponseModel(),
       sender: this.sender,
@@ -875,6 +893,19 @@ class BaseClient {
 
     if (this.contextMeta) {
       responseMessage.contextMeta = this.contextMeta;
+    }
+
+    /** Resumable generation controllers must win the generation's terminal
+     * CAS before this outcome-defining `unfinished:false` write can begin.
+     * The hook is deliberately narrow: ordinary clients omit it, and `false`
+     * means another terminal owner (for example Stop) already won, so this
+     * stale completion must return without writing the response row. */
+    if (typeof opts.beforeResponsePersistence === 'function') {
+      const ownsTerminalPersistence = await opts.beforeResponsePersistence(responseMessage);
+      if (ownsTerminalPersistence === false) {
+        responseMessage.databasePromise = Promise.resolve({ persistenceSkipped: true });
+        return responseMessage;
+      }
     }
 
     responseMessage.databasePromise = this.saveMessageToDatabase(
@@ -1215,6 +1246,8 @@ class BaseClient {
             !item.type ||
             item.type === ContentTypes.THINK ||
             item.type === ContentTypes.ERROR ||
+            // UI-only progress headers — never model input, never billed output
+            item.type === ContentTypes.ACTIVITY_LABEL ||
             item.type === ContentTypes.IMAGE_URL
           ) {
             continue;
@@ -1567,8 +1600,10 @@ class BaseClient {
         return message;
       }
 
-      await this.addFileContextToMessage(message, contextFiles);
-      await this.processAttachments(message, contextFiles);
+      await Promise.all([
+        this.addFileContextToMessage(message, contextFiles),
+        this.processAttachments(message, contextFiles),
+      ]);
 
       this.message_file_map[message.messageId] = contextFiles;
       return message;

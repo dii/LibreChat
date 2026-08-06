@@ -107,6 +107,14 @@ export interface RegisterCodeExecutionToolsResult {
   toolDefinitions: LCTool[];
   /** Tool names newly registered (skipped names that already existed). */
   registered: string[];
+  /**
+   * Every tool name this registration manages, whether newly registered or
+   * already present. `initializeAgent` records these under the capability
+   * marker that triggered the call, so a `tool_options` entry keyed by the
+   * marker projects onto exactly the definitions the capability produced —
+   * the registrar itself is the source of truth, not a hand-maintained map.
+   */
+  toolNames: string[];
 }
 
 export type RegisterFileAuthoringToolsResult = RegisterCodeExecutionToolsResult;
@@ -140,9 +148,9 @@ const READ_FILE_DEF: LCTool = Object.freeze({
   responseFormat: ReadFileToolDefinition.responseFormat,
 }) as LCTool;
 
-const CODE_READ_FILE_DESCRIPTION = `Read a known text file from the code-execution sandbox. Returns line-numbered text; large files may be truncated around 256KB.
+const CODE_READ_FILE_DESCRIPTION = `Read a known file from the code-execution sandbox. Text files return line-numbered content (large files truncate around 256KB); images (png, jpeg, gif, webp) return as visual content you can see.
 
-Use for text, CSV, JSON, Markdown, logs, and small source files at paths returned by tool output, just written, or under /mnt/data/. Do not run ls/find just to rediscover known paths. Use bash_tool for binary files, large files, transforms, metadata, or true filesystem discovery. /tmp is per-call scratch and unavailable later.`;
+Use for text, CSV, JSON, Markdown, logs, small source files, and images at paths returned by tool output, just written, or under /mnt/data/. Do not run ls/find just to rediscover known paths. Use bash_tool for other binary files, large files, transforms, metadata, or true filesystem discovery. /tmp is per-call scratch and unavailable later.`;
 
 const CODE_READ_FILE_PARAMETERS: LCTool['parameters'] = Object.freeze({
   type: 'object',
@@ -173,7 +181,8 @@ const SKILL_CREATE_FILE_PARAMETERS: LCTool['parameters'] = Object.freeze({
     },
     content: {
       type: 'string',
-      description: 'Complete file contents.',
+      description:
+        'Complete file contents. Keep a single call well under the streamed tool-argument limit (64 KB by default); build larger files incrementally with edit_file.',
     },
     overwrite: {
       type: 'boolean',
@@ -194,7 +203,8 @@ const CODE_CREATE_FILE_PARAMETERS: LCTool['parameters'] = Object.freeze({
     },
     content: {
       type: 'string',
-      description: 'Complete file contents.',
+      description:
+        'Complete file contents. Keep a single call well under the streamed tool-argument limit (64 KB by default); build larger files incrementally with edit_file.',
     },
     overwrite: {
       type: 'boolean',
@@ -287,7 +297,9 @@ const CODE_CREATE_FILE_DESCRIPTION = `Create a new file, or overwrite an existin
 
 Use for new files and full rewrites where the change is larger than half the file. Requires overwrite: true to replace existing files. Refuses otherwise.
 
-Targets code-execution sandbox paths. Prefer /mnt/data/{file} for files that should remain available to later sandbox calls.`;
+Targets code-execution sandbox paths. Prefer /mnt/data/{file} for files that should remain available to later sandbox calls.
+
+Very long content can exceed the streamed tool-argument limit (64 KB by default) and fail the call. For large files, create the file with its first section, then extend it with edit_file.`;
 
 const SKILL_EDIT_FILE_DESCRIPTION = `Apply targeted text replacements to an existing file.
 
@@ -443,6 +455,7 @@ export function registerCodeExecutionTools(
   const candidates: LCTool[] = includeBash
     ? [readFileDef, buildBashToolDef({ enableToolOutputReferences, statefulSessions })]
     : [readFileDef];
+  const toolNames = candidates.map((def) => def.name);
 
   const inputDefinitions = toolDefinitions ?? [];
   let workingDefinitions = inputDefinitions;
@@ -485,11 +498,12 @@ export function registerCodeExecutionTools(
    * code-only `read_file` definition was upgraded above.
    */
   if (newDefs.length === 0) {
-    return { toolDefinitions: workingDefinitions, registered };
+    return { toolDefinitions: workingDefinitions, registered, toolNames };
   }
   return {
     toolDefinitions: [...workingDefinitions, ...newDefs],
     registered,
+    toolNames,
   };
 }
 
@@ -499,6 +513,7 @@ export function registerFileAuthoringTools(
   const { toolRegistry, toolDefinitions, includeSkillFileInstructions = true } = params;
 
   const candidates = buildFileAuthoringDefs(includeSkillFileInstructions);
+  const toolNames = candidates.map((def) => def.name);
   const inputDefinitions = toolDefinitions ?? [];
   let workingDefinitions = inputDefinitions;
 
@@ -536,10 +551,11 @@ export function registerFileAuthoringTools(
   }
 
   if (newDefs.length === 0) {
-    return { toolDefinitions: workingDefinitions, registered };
+    return { toolDefinitions: workingDefinitions, registered, toolNames };
   }
   return {
     toolDefinitions: [...workingDefinitions, ...newDefs],
     registered,
+    toolNames,
   };
 }
