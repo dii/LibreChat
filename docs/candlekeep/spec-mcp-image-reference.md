@@ -203,16 +203,29 @@ is not the user.
 
 ## 6. Naming and ordinals
 
-Attempt ordinals are **derived, not stored**: they are the position of a render in the thread walk's
-own ordering, counted from the start of the conversation. Two properties follow, and both matter.
+**Build the set from the messages, not from `getThreadData`'s `fileIds`.** This is a correction: an
+earlier revision of this section said the upload/render distinction was available from the walk. It is
+not. `getThreadData` collects `files` and `attachments` into a single `fileIdSet` and returns
+`fileIds: string[]`, flat and deduplicated, so it carries no grouping, no ordering that survives
+deduplication, and no per-image metadata.
 
-They are stable for a given conversation, because the messages collection is append-only and the walk
-is deterministic. And they need no new field anywhere, which is what keeps this design free of the
-schema addition that killed an earlier version.
+Use `getThreadData(messages, parentMessageId).messageIds` for what it does provide, which is
+authoritative parent-chain membership, then walk those messages in conversation order. Everything else
+comes from the walk you control:
 
-A render is distinguished from a source photo by whether it arrived as a message `attachment` (tool
-output) or as a message `file` (user upload). `getThreadData` collects both and the distinction is
-available at the point the sets are built.
+- **Upload or render.** Two independent signals agree, and either is sufficient: the image arrived in
+  the message's `files` (upload) or `attachments` (render); and the file document carries
+  `context: FileContext.message_attachment` for an upload against
+  `context: FileContext.image_generation` for a render, set at `callbacks.js:864` and `:1186`. Prefer
+  the document field, since it survives regardless of how the message was assembled.
+- **Ordinals** are the position of a render among renders, counted forward from the start of the
+  conversation. Derived, never stored, so there is no new field anywhere. Stable because the messages
+  collection is append-only and the walk is deterministic.
+- **The description that produced a render** is not on the file document. The link is `toolCallId`,
+  which the tool-end callback puts on the message's `attachments` entry *after* `saveBase64Image` has
+  already persisted the document. So the description is recovered by matching that `toolCallId`
+  against the tool calls in the same thread's message content. Achievable because we hold the
+  messages, but it is a correlation step, not a field read, and it should be budgeted as one.
 
 ## 7. Implementation
 
@@ -221,17 +234,22 @@ available at the point the sets are built.
 Compute the conversation's image set **outside the `resendFiles` conditional**, which opens at `:708`
 and closes at `:815` in the current tree, and only when the agent carries the consumer's tools.
 
-1. Union `requestFiles` with `getThreadData(messages, parentMessageId).fileIds`, guarded on
+1. Determine thread membership with `getThreadData(messages, parentMessageId)`, guarded on
    `conversationId != null`, which is genuinely null on turn 1 while `db.getMessages`'s filter type
-   requires a string. Put `requestFiles` first so an image attached this turn is never the one a bound
-   discards.
+   requires a string. Union its `fileIds` with `requestFiles` so an image attached this turn is
+   included before the conversation is persisted.
 2. **Fetch the documents.** `getThreadData` returns bare strings; the next steps need `user`, `type`,
-   `width` and `height`. Use `getFiles({ file_id: { $in: ids } }, {}, {})`, as `resources.ts` does
-   immediately before filtering.
+   `width`, `height` and `context`. Use `getFiles({ file_id: { $in: ids } }, {}, {})`, as
+   `resources.ts` does immediately before filtering. Skipping this fetch is the defect that would make
+   the whole feature silently produce nothing, because property access on a string is `undefined`.
 3. Authorise with `filterFilesByAgentAccess`, passing a real `agentId` where one exists. Read §5 on why
    this is not sufficient on its own.
-4. Split into source photos and attempts, keep images with dimensions, apply the bounds in §7.2, and
-   mint a reference for each.
+4. Walk the thread's messages in order, per §6, to split uploads from renders, assign ordinals, and
+   recover each render's description. Keep images with dimensions, apply the bounds in §7.2, and mint a
+   reference for each.
+
+The gate is `agent.tools` containing a tool name that includes `Constants.mcp_delimiter` and belongs
+to the consumer's server, following the pattern already at `initialize.ts:652`.
 
 **This issues its own `db.getMessages` call.** An earlier draft said to reuse the one the execute_code
 branch makes. That is not possible: that call sits at `:741`, nested inside the `resendFiles`

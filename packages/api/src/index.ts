@@ -22,6 +22,7 @@ export * from './mcp/errors';
 export * from './mcp/cache';
 export * from './mcp/tools';
 export * from './mcp/fileRef';
+export * from './mcp/conversationImages';
 export * from './mcp/request';
 /* Utilities */
 export * from './mcp/utils';
