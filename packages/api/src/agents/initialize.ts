@@ -66,6 +66,10 @@ import { registerMemoryTools, memoryToolUsageGuard } from './memory';
 import { applyIntentLabels, sanitizeIntentLabels } from './intent';
 import { applyBackgroundToolCalls } from './background';
 import { filterFilesByEndpointConfig } from '~/files';
+import {
+  resolveConversationImageContext,
+  MCP_CONVERSATION_IMAGES_KEY,
+} from '~/mcp/resolveImageContext';
 import { generateArtifactsPrompt } from '~/prompts';
 import { getProviderConfig } from '~/endpoints';
 import { primeResources } from './resources';
@@ -1070,6 +1074,34 @@ export async function initializeAgent(
     primedCodeFiles: undefined,
   };
 
+  /**
+   * Conversation images for an MCP image tool server: the thread's photos and
+   * renders, named as signed principal-bound references so the server can fetch
+   * the bytes without the pixels entering model context.
+   *
+   * Deliberately outside the `resendFiles` conditional above. That setting
+   * governs re-sending file *bytes* to the model, and this sends none; gating on
+   * it would let an unrelated toggle silently disable the feature.
+   *
+   * Returns null, and costs no query and no mint, unless the agent actually
+   * carries the configured server's tools.
+   */
+  const conversationImageContext = await resolveConversationImageContext({
+    agentTools: agent.tools,
+    serverName: process.env.MCP_IMAGE_TOOL_SERVER,
+    signingKey: process.env.MCP_FILE_SIGNING_KEY,
+    userId: requestFileOwnerId ?? req.user?.id,
+    tenantId: req.user?.tenantId,
+    agentId: agent.id,
+    role: req.user?.role,
+    conversationId,
+    parentMessageId,
+    requestFileIds: requestFiles.map((file) => file.file_id).filter(Boolean),
+    getMessages: db.getMessages as never,
+    getFiles: db.getFiles as never,
+    filterFiles: db.filterFilesByAgentAccess as never,
+  });
+
   let toolDefinitions = loadedToolDefinitions;
 
   /**
@@ -1535,7 +1567,14 @@ export async function initializeAgent(
     requestAttachments,
     agentContextAttachments,
     toolContextMap: toolContextMap ?? {},
-    dynamicToolContextMap: dynamicToolContextMap ?? {},
+    /* Merged rather than mutated, and only when there is something to say, so an
+     * agent with no usable images is byte-identical to one before this feature. */
+    dynamicToolContextMap: conversationImageContext
+      ? {
+          ...(dynamicToolContextMap ?? {}),
+          [MCP_CONVERSATION_IMAGES_KEY]: conversationImageContext,
+        }
+      : (dynamicToolContextMap ?? {}),
     useLegacyContent: !!options.useLegacyContent,
     tools: (tools ?? []) as GenericTool[] & string[],
     maxToolResultChars: maxToolResultCharsResolved,
