@@ -365,6 +365,16 @@ see that a server can read their images.
 2. **Scope of the grant.** A reference names one file for one principal, which is much tighter than the
    earlier user-wide design, but a consumer accumulating references over time holds a growing set of
    live capabilities until they expire.
+
+   The **conversation binding is decided: keep it** (owner, 2026-08-07). It was briefly proposed for
+   removal as unused, on the grounds that a thirty-minute expiry bound to one file and one principal
+   already carries most of the value. Keeping it costs a few payload bytes and one comparison, and it
+   closes replay of a leaked reference into a different conversation of the same user. An unused belt
+   on a security boundary is a better failure than a missing one.
+
+   Worth recording so the two are not confused again: the binding does **not** govern whether a user
+   can reuse an image across conversations. Thread scoping does, independently, and would still do so
+   if the binding were removed.
 3. **Ordinals across branching.** Derived ordinals are stable within a thread; a branched conversation
    produces a different walk and therefore different numbering. Acceptable, undocumented for users.
 
