@@ -268,4 +268,74 @@ describe('buildConversationImages', () => {
       expect(set.totalAttempts).toBe(0);
     });
   });
+
+  /* Shapes verified against the live LibreChat database on 2026-08-07, so this
+   * block pins production reality rather than the author's reading of the code.
+   * What was confirmed: renders carry context `image_generation` (32 records) and
+   * uploads `message_attachment`; attachments are denormalised full file objects
+   * that do carry `toolCallId`; a content part is `{type, tool_call:{id,name,args}}`;
+   * and `args` is persisted as a JSON *string*, not an object, so the parse branch
+   * is the real path and the object branch is only defensive. */
+  describe('the shapes production actually stores', () => {
+    const productionMessages: ThreadImageMessage[] = [
+      { files: [{ file_id: 'upload-1' }] },
+      {
+        /* Denormalised in reality: the attachment repeats the file's own fields.
+         * We still classify on the fetched document, which is authoritative. */
+        attachments: [
+          {
+            file_id: 'render-1',
+            toolCallId: 'call_abc123',
+            ...({
+              context: 'image_generation',
+              type: 'image/png',
+              width: 768,
+              height: 987,
+            } as object),
+          },
+        ],
+        content: [
+          {
+            type: 'tool_call',
+            tool_call: {
+              id: 'call_abc123',
+              name: 'generate_image_mcp_comfyui-image',
+              args: '{"prompt":"a tattoo of a koi fish","negative_prompt":"blurry","width":768,"height":987}',
+            },
+          },
+        ],
+      },
+    ];
+
+    const productionFiles: ImageFileDocument[] = [
+      {
+        file_id: 'upload-1',
+        type: 'image/png',
+        width: 1024,
+        height: 1024,
+        filename: 'torso.png',
+        context: 'message_attachment',
+      },
+      {
+        file_id: 'render-1',
+        type: 'image/png',
+        width: 768,
+        height: 987,
+        filename: 'render.png',
+        context: 'image_generation',
+      },
+    ];
+
+    it('splits, numbers and describes correctly against real shapes', () => {
+      const set = buildConversationImages({
+        messages: productionMessages,
+        files: productionFiles,
+      });
+      expect(set.sources.map((i) => i.fileId)).toEqual(['upload-1']);
+      expect(set.attempts).toHaveLength(1);
+      expect(set.attempts[0].ordinal).toBe(1);
+      /* Recovered by parsing the JSON-string args, which is how it is stored. */
+      expect(set.attempts[0].description).toBe('a tattoo of a koi fish');
+    });
+  });
 });
