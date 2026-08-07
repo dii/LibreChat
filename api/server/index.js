@@ -300,6 +300,9 @@ const startServer = async () => {
   // Service-token-guarded canvas admin (e.g. doc delete from the canvas MCP);
   // deliberately outside the requireJwtAuth chain since the caller holds no JWT.
   app.use('/api/canvas-admin', routes.canvasAdmin);
+  // Service-token-guarded image bytes for MCP tool servers, addressed by a signed,
+  // principal-bound reference; outside the requireJwtAuth chain for the same reason.
+  app.use('/api/mcp/files', routes.mcpFiles);
   app.use('/images/', createValidateImageRequest(appConfig.secureImageLinks), routes.staticRoute);
   app.use('/api/share', preAuthTenantMiddleware, routes.share);
   app.use('/api/roles', routes.roles);
