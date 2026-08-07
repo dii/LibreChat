@@ -13,8 +13,13 @@ Verified 2026-08-07 at merge commit `cb50f78a1`, immediately after merging 153 u
 | `origin` | **upstream** `danny-avila/LibreChat`. The fork (`dii/LibreChat`) is the `fork` remote, so pushes need an explicit remote. |
 | Behind upstream before 2026-08-07 | 153 commits, tip 23 July against an upstream tip of 5 August |
 | Of those, touching files our work depends on | 32 |
-| Ahead of upstream | 13 commits, three feature clusters |
+| Ahead of upstream | **9 feature commits** in three clusters, plus the commit that added these documents. 15 including merge commits, 11 on first-parent. |
 | Backup before the merge | `backup/deploy-candlekeep-pre-merge-20260807` |
+
+The ahead-count is given three ways because the three numbers disagree and a single figure invites the
+wrong one. Nine is the number that matters: it is what the clusters below enumerate. An earlier
+revision said thirteen, which matched no counting method and disagreed with this document's own
+tables.
 
 **The lesson worth keeping.** The drift was invisible because nothing tracked it. Two weeks of
 upstream movement in `api/server/services/Files/`, `packages/api/src/agents/` and
@@ -100,6 +105,36 @@ regenerating the whole thing, and scopes version history per artifact identifier
 artifacts does not mix their histories.
 
 **Carrying cost.** Moderate. Mostly additive, in an area upstream changes less often than files.
+
+## A protocol migration is coming, and it is upstream's problem before it is ours
+
+Recorded here because it changes when it is sensible to contribute anything, and because the drift it
+will cause is the same kind this document exists to make visible.
+
+MCP released revision **`2026-07-28`** on 28 July, the largest since the protocol launched. LibreChat
+declares `@modelcontextprotocol/sdk ^1.29.0`, whose `LATEST_PROTOCOL_VERSION` is `2025-11-25`, so it is
+one full revision behind.
+
+What the new revision does:
+
+- **Removes protocol-level sessions.** No `initialize`/`initialized` handshake, no `Mcp-Session-Id`.
+  Every request carries its own protocol version and client capabilities in `_meta`, and a new
+  `server/discover` RPC advertises capabilities.
+- **Replaces server-initiated requests with Multi Round-Trip Requests.** A server returns an
+  `InputRequiredResult` carrying `inputRequests`; the client retries with `inputResponses`.
+- **Deprecates Roots, Sampling and Logging**, on a twelve-month window, along with the HTTP+SSE
+  transport and OAuth Dynamic Client Registration.
+- **States that servers needing cross-call state should use server-minted handles passed as ordinary
+  tool arguments**, which is what our image broker already does.
+
+Where this fork stands: its MCP layer uses none of the four deprecated features. It does read the
+transport's `sessionId` (`packages/api/src/mcp/connection.ts:2113-2115`), which is exactly what the
+stateless core removes. That is the migration surface, and it is upstream's to make first.
+
+Two consequences for us. Maintainer attention will be on this migration for a while, which is an
+argument against proposing new capabilities into it right now. And the new revision's `requestState`
+rules, which require integrity protection, principal binding and a short expiry for state passed
+through an untrusted hop, are the model the image spec's signed reference follows.
 
 ## What this fork does not carry, and should not
 

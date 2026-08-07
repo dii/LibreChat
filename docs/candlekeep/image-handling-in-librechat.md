@@ -16,17 +16,31 @@ they were rediscovered wrongly.
 
 The most expensive wrong assumption in this area, and it has been made twice.
 
-`routes/files/images.js` dispatches on `metadata.tool_resource`:
+`routes/files/images.js:41` dispatches on **two** conditions, not one:
 
-- **No tool resource** (the ordinary composer attachment): `processImageFile`
+```js
+if (!isAssistantsEndpoint(metadata.endpoint) && metadata.tool_resource != null) {
+  return await processAgentFileUpload({ req, res, metadata, sseStream });
+}
+await processImageFile({ req, res, metadata, sseStream });
+```
+
+- **Ordinary composer attachment** (no tool resource): `processImageFile`
   (`api/server/services/Files/process.js:454`) is called directly with the real `file_id`.
-- **With a tool resource** (adding a file to an agent): the request goes to `processAgentFileUpload`,
-  which calls `processImageFile` with a **throwaway** `metadata: { file_id: v4() }` and then persists
-  its own document under the real id. The assistants path does the same.
+- **Agent file with a tool resource**: the request goes to `processAgentFileUpload`, which calls
+  `processImageFile` with a **throwaway** `metadata: { file_id: v4() }` and then persists its own
+  document under the real id.
+- **Assistants endpoint**: the negated first condition means an assistants upload **never** reaches
+  `processAgentFileUpload`, regardless of `tool_resource`. It always falls through to
+  `processImageFile` with the real `file_id`, exactly like a composer attachment.
 
-So a field written inside `processImageFile` reaches the real document on the composer path and an
-orphan document on the other two. `processAgentFileUpload` copies specific fields off the returned
-result to bridge that gap.
+So a field written inside `processImageFile` reaches the real document on two of the three paths, and
+an orphan document only on the agent tool-resource path. `processAgentFileUpload` copies specific
+fields off the returned result to bridge that gap.
+
+> An earlier revision of this document asserted that the assistants path behaved like the
+> tool-resource path. It does not, and the negation is easy to read past. Corrected 2026-08-07 after
+> a review caught it, in the section whose own opening line warns about this exact class of error.
 
 **Two further traps in the same function:**
 
