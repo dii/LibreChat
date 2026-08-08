@@ -53,6 +53,9 @@ describe('resolveConversationImageContext', () => {
   /* U8 and N5. A request that cannot use the feature must cost nothing: not a
    * Mongo query, not a network call, not a context key. These assert the
    * *absence of work*, which is the part a later refactor silently breaks. */
+  /* eslint-disable jest/expect-expect --
+   * Assertions live in expectNoWork, which is the point: every case must assert
+   * the *same* absence of work, and inlining them would let them drift apart. */
   describe('costs nothing when it does not apply', () => {
     const expectNoWork = async (params: ReturnType<typeof base>) => {
       expect(await resolveConversationImageContext(params)).toBeNull();
