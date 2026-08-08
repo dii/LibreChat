@@ -72,6 +72,11 @@ export interface ConversationImageSet {
   totalAttempts: number;
   /** Present only when the window dropped some, so a miss can be explained rather than guessed at. */
   omittedAttempts?: { from: number; to: number };
+  totalSources: number;
+  /** How many source photos were dropped by the cap. Sources are pinned against
+   * attempts, not unbounded, and dropping one silently would be worse here than
+   * for an attempt: the source is the anchor every attempt derives from. */
+  omittedSources?: number;
 }
 
 export interface BuildConversationImagesParams {
@@ -144,7 +149,12 @@ export function buildConversationImages({
   maxSources = DEFAULT_MAX_SOURCES,
   maxAttempts = DEFAULT_MAX_ATTEMPTS,
 }: BuildConversationImagesParams): ConversationImageSet {
-  const empty: ConversationImageSet = { sources: [], attempts: [], totalAttempts: 0 };
+  const empty: ConversationImageSet = {
+    sources: [],
+    attempts: [],
+    totalAttempts: 0,
+    totalSources: 0,
+  };
   if (!Array.isArray(messages) || !Array.isArray(files)) {
     return empty;
   }
@@ -221,14 +231,19 @@ export function buildConversationImages({
   /* Most recent first in both lists: it is the order a person iterating thinks
    * in, and it makes the window boundary the far end rather than the near one. */
   const windowedAttempts = attempts.slice(-maxAttempts).reverse();
+  const windowedSources = sources.slice(-maxSources).reverse();
   const result: ConversationImageSet = {
-    sources: sources.slice(-maxSources).reverse(),
+    sources: windowedSources,
     attempts: windowedAttempts,
     totalAttempts,
+    totalSources: sources.length,
   };
 
   if (totalAttempts > windowedAttempts.length) {
     result.omittedAttempts = { from: 1, to: totalAttempts - windowedAttempts.length };
+  }
+  if (sources.length > windowedSources.length) {
+    result.omittedSources = sources.length - windowedSources.length;
   }
   return result;
 }

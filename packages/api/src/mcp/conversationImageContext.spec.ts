@@ -28,6 +28,7 @@ const set = (over: Partial<ConversationImageSet> = {}): ConversationImageSet => 
   sources: [],
   attempts: [],
   totalAttempts: 0,
+  totalSources: 0,
   ...over,
 });
 
@@ -65,6 +66,16 @@ describe('renderImageContext', () => {
     it('says source photos are always available, which is the point of pinning them', () => {
       const text = renderImageContext(set({ sources: [source('a')] }), mint) as string;
       expect(text).toMatch(/always available/i);
+    });
+
+    it('stops claiming "always available" once the cap has dropped one', () => {
+      const text = renderImageContext(
+        set({ sources: [source('a')], totalSources: 12, omittedSources: 11 }),
+        mint,
+      ) as string;
+      expect(text).not.toMatch(/always available/i);
+      expect(text).toMatch(/12/);
+      expect(text).toMatch(/not shown/i);
     });
 
     it('omits the source section entirely when there are none', () => {

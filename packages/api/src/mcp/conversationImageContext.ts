@@ -74,7 +74,16 @@ export function renderImageContext(
   ];
 
   if (sources.length > 0) {
-    parts.push('', 'SOURCE PHOTOS (always available):');
+    /* Only claim "always available" when it is true. Sources are pinned against
+     * attempts, but they are still capped, and the anchor going missing without
+     * a word is worse than an attempt doing so. */
+    const omitted = set.omittedSources ?? 0;
+    parts.push(
+      '',
+      omitted > 0
+        ? `SOURCE PHOTOS (showing ${sources.length} of ${set.totalSources}, most recent first; ${omitted} older not shown):`
+        : 'SOURCE PHOTOS (always available):',
+    );
     for (const [image, reference] of sources) {
       parts.push(line(image, reference));
     }

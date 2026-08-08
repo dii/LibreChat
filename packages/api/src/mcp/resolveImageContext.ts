@@ -80,10 +80,16 @@ export interface ResolveConversationImageContextParams {
   maxAttempts?: number;
 }
 
-/** An MCP tool key embeds its server, so membership is a substring test on the delimiter. */
+/**
+ * An MCP tool key is `<toolName><delimiter><serverName>`, so the server name is
+ * a *suffix*. Matching it as a bare substring would also match any server whose
+ * name merely starts with this one, so `comfyui-image-staging` would activate
+ * the feature configured for `comfyui-image`. `splitMCPToolKey` anchors the
+ * same way, for the same reason.
+ */
 const carriesServerTools = (tools: unknown[] | undefined, serverName: string): boolean => {
   const marker = `${Constants.mcp_delimiter}${serverName}`;
-  return (tools ?? []).some((tool) => typeof tool === 'string' && tool.includes(marker));
+  return (tools ?? []).some((tool) => typeof tool === 'string' && tool.endsWith(marker));
 };
 
 export async function resolveConversationImageContext({
@@ -140,7 +146,21 @@ export async function resolveConversationImageContext({
       return null;
     }
 
-    const documents = await getFiles({ file_id: { $in: Array.from(fileIds) } }, null, null);
+    /* Scoped to the principal, and that is the PRIMARY gate, not a nicety.
+     * `requestFileIds` originates in `req.body.files`, which the caller
+     * controls, so an unscoped query here lets anyone who knows a file id pull
+     * another user's filename, dimensions and recovered prompt into their own
+     * tool context. The signed reference protects the bytes but not this
+     * metadata, and `filterFilesByAgentAccess` below returns its input
+     * unfiltered for an ephemeral agent, which is the ordinary case. */
+    const filter: Record<string, unknown> = {
+      file_id: { $in: Array.from(fileIds) },
+      user: userId,
+    };
+    if (tenantId) {
+      filter.tenantId = tenantId;
+    }
+    const documents = await getFiles(filter, null, null);
     if (!documents?.length) {
       return null;
     }

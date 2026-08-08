@@ -104,7 +104,10 @@ describe('buildConversationImages', () => {
       expect(set.attempts.length).toBe(DEFAULT_MAX_ATTEMPTS);
     });
 
-    it('bounds sources too, keeping the most recent', () => {
+    it('bounds sources too, keeping the most recent, and says how many it dropped', () => {
+      /* Pinned means "never evicted to make room for attempts", not "unbounded".
+       * Dropping one silently would be worse than dropping an attempt, because
+       * the source is the anchor every attempt derives from. */
       const ids = Array.from({ length: DEFAULT_MAX_SOURCES + 3 }, (_, i) => `p${i + 1}`);
       const set = buildConversationImages({
         messages: ids.map((id) => userMsg([id])),
@@ -112,6 +115,17 @@ describe('buildConversationImages', () => {
       });
       expect(set.sources).toHaveLength(DEFAULT_MAX_SOURCES);
       expect(set.sources[0].fileId).toBe(ids[ids.length - 1]);
+      expect(set.totalSources).toBe(DEFAULT_MAX_SOURCES + 3);
+      expect(set.omittedSources).toBe(3);
+    });
+
+    it('reports no omission when every source fits', () => {
+      const set = buildConversationImages({
+        messages: [userMsg(['a'])],
+        files: [upload('a')],
+      });
+      expect(set.totalSources).toBe(1);
+      expect(set.omittedSources).toBeUndefined();
     });
   });
 

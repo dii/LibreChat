@@ -87,8 +87,12 @@ const handleMcpFileGet = async (req, res) => {
     const source = file.source || FileSources.local;
     const { getDownloadStream } = getStrategyFunctions(source);
     if (!getDownloadStream) {
+      /* Answered as a miss, not a 501. Both of these are reachable only AFTER a
+       * lookup matched a real file owned by the reference's principal, so any
+       * distinguishable response here is exactly the existence oracle the rest
+       * of this handler is built to avoid. The detail goes to the log instead. */
       logger.warn(`[/api/mcp/files] no stream method for source ${source}`);
-      return res.status(501).json({ error: 'not implemented for this storage source' });
+      return notFound(res);
     }
 
     /* Strip any cache-busting query string so a local path resolves to the real
@@ -102,7 +106,7 @@ const handleMcpFileGet = async (req, res) => {
     fileStream.on('error', (error) => {
       logger.error('[/api/mcp/files] stream error', error);
       if (!res.headersSent) {
-        res.status(500).end();
+        notFound(res);
       }
     });
 

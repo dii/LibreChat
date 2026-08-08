@@ -68,6 +68,13 @@ describe('resolveConversationImageContext', () => {
       await expectNoWork(base({ agentTools: ['edit_image_mcp_some-other-server'] }));
     });
 
+    it('when a different server merely starts with the configured name', async () => {
+      /* The key is `<tool>_mcp_<server>`, so the server name is a suffix. A
+       * substring test would fire for `comfyui-image-staging` too, activating
+       * the real broker's context for an agent carrying none of its tools. */
+      await expectNoWork(base({ agentTools: [`edit_image_mcp_${SERVER}-staging`] }));
+    });
+
     it('when no server is configured, so the feature is off', async () => {
       await expectNoWork(base({ serverName: undefined }));
     });
@@ -150,5 +157,41 @@ describe('resolveConversationImageContext', () => {
     for (const field of ['messageId', 'parentMessageId', 'files', 'attachments', 'content']) {
       expect(select).toContain(field);
     }
+  });
+
+  /* The blocking finding from the 2026-08-08 implementation red-team.
+   * `requestFileIds` originates in `req.body.files`, which the caller controls.
+   * Without a user scope on this query, anyone who knows a file id pulls another
+   * user's filename, dimensions and recovered prompt into their own context and
+   * on to the LLM provider. The signed reference protects the bytes; it does not
+   * protect this metadata, and the access filter fails open for the ordinary
+   * ephemeral-agent case. So the scope on THIS query is the real gate. */
+  describe('the file query is scoped to the principal', () => {
+    it('never queries for a file id without constraining the owner', async () => {
+      const params = base();
+      await resolveConversationImageContext(params);
+      const filter = params.getFiles.mock.calls[0][0];
+      expect(filter).toEqual(expect.objectContaining({ user: USER }));
+    });
+
+    it('carries the tenant into the query when there is one', async () => {
+      const params = base({ tenantId: 'tenant-7' });
+      await resolveConversationImageContext(params);
+      expect(params.getFiles.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ tenantId: 'tenant-7' }),
+      );
+    });
+
+    it("offers nothing when the caller names someone else's file id", async () => {
+      /* The scoped query is what makes this return empty; the model must then be
+       * told about no images at all rather than about a stranger's photo. */
+      const params = base({
+        conversationId: null,
+        parentMessageId: null,
+        requestFileIds: ['someone-elses-file'],
+        getFiles: jest.fn().mockResolvedValue([]),
+      });
+      expect(await resolveConversationImageContext(params)).toBeNull();
+    });
   });
 });

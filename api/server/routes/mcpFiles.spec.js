@@ -164,6 +164,18 @@ describe('GET /api/mcp/files/:reference', () => {
       expectBareNotFound(await get());
     });
 
+    it('a storage source with no stream method, which would otherwise 501', async () => {
+      /* Reachable only after a lookup matched a real file owned by this
+       * principal, so a distinguishable status here is an existence oracle. */
+      mockGetDownloadStream.mockImplementation(() => {
+        throw new Error('should not be called');
+      });
+      const strategies = require('~/server/services/Files/strategies');
+      jest.spyOn(strategies, 'getStrategyFunctions').mockReturnValue({});
+      expectBareNotFound(await get());
+      strategies.getStrategyFunctions.mockRestore();
+    });
+
     it('a storage lookup that throws, leaking nothing about why', async () => {
       mockGetFiles.mockRejectedValue(new Error('mongo is on fire'));
       const res = await get();
