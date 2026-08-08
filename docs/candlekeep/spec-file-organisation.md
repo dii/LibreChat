@@ -26,6 +26,7 @@ convergence matters: an artefact that is a `File` document is filable, one in it
 | **F3** | Nobody else in the household can see or reach your folders | consistent with U6/C6 |
 | **F4** | Every artefact in the file store is filable, including canvas documents | derived from C8 |
 | **F5** | Turning it on changes nothing else | author |
+| **F6** | Attach a file you already have to a new chat, without uploading it again | **owner, 2026-08-08** |
 
 ## 2. Shape
 
@@ -113,6 +114,42 @@ ownership on every move, and scope every listing by user regardless.
 the per-file funnel and then a raw `deleteMany({user})` that bypasses it; folders should be removed
 explicitly rather than assumed to follow.
 
+## 5a. Attaching a file you already have
+
+F6. A library you can organise but not use is only tidy. This is what makes it useful, and it is
+also the fix for a friction recorded as an accepted limit in
+[`spec-mcp-image-reference.md`](spec-mcp-image-reference.md): returning to a photo in a fresh
+conversation currently means uploading it again from disk.
+
+**Almost all of it already exists.** Attaching a file to a turn means putting its `file_id` into
+`req.body.files`. That is the same mechanism that carries a file just uploaded; an existing id
+works identically. Uploading only ever existed to *create* the file, not to attach it.
+
+**The security precondition is already met, and was not free.** Before 2026-08-08, `req.body.files`
+fed a query with no user scope, so a client naming any file id pulled that file's metadata into its
+own context. That query is now scoped to the principal. Without that fix this feature would be an
+enumeration hole rather than a feature, so **it must not be exposed on a tree where that scoping is
+absent**.
+
+**What is missing is a picker.** Upstream already has the shape: `SharePointPickerDialog` behind
+`sharePointFilePickerEnabled`, reached from the attach menu. Mirror the affordance, not the
+behaviour:
+
+- The SharePoint picker **downloads** and creates a new `File`, which is right for an external
+  source and wrong here.
+- Ours **references**. No copy, no new `File` document, no bytes moved. The selection yields
+  `file_id`s and nothing else happens.
+
+**Leave `conversationId` alone.** It is optional on the schema, so it is provenance — where the
+file was first uploaded — not ownership. If attaching rewrote it, a file would appear to move
+between conversations and the most recent chat would erase the record of where it came from. The
+message already records the association.
+
+**Nothing in the image feature needs to change.** The thread walk collects ids from a message's
+`files` and `attachments`, never from the file's own `conversationId`, so a re-attached photo takes
+exactly the same path as a fresh upload: reference minted, offered to the tools, indistinguishable
+downstream.
+
 ## 6. What the model sees: nothing, in v1
 
 Folders are a **user** surface. The model is not told the folder structure and cannot browse it.
@@ -172,6 +209,10 @@ a prerequisite for this feature being pleasant, not a separate nicety.
 | Dangling | A file whose folder row is gone appears as unfiled, never hidden. |
 | F3 | Every listing is user-scoped. Filing a file into another user's folder is refused and writes nothing. |
 | F5 | A request that touches no folder performs no extra query. |
+| F6 | Attaching an existing file creates **no** new `File` document and moves no bytes. |
+| F6 | Attaching a file the caller does not own is refused and nothing is written. |
+| F6 | `conversationId` is unchanged after a file is attached to a different conversation. |
+| F6 | A re-attached image reaches the image tools identically to a freshly uploaded one. |
 | Account | Deleting a user removes their folders. |
 
 ## 11. Slicing
@@ -181,3 +222,7 @@ a prerequisite for this feature being pleasant, not a separate nicety.
 2. **`folderId` on `File`, filing and unfiling, listing by folder and subtree.**
 3. **The UI**: a tree in the files panel, move-to, and delete with counts. Plus the `context`
    filtering from §7, without which the library is a dumping ground.
+4. **The attach picker**, §5a: a menu entry beside the upload options, a dialog that browses the
+   tree from slice 3, and a selection that yields `file_id`s into the request. This is the slice
+   that makes the other three worth having, and it is small because the backend path already
+   exists.
