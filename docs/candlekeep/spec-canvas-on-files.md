@@ -1,7 +1,8 @@
 # Spec: Canvas without a second store
 
-**Status:** proposal. **Read §1 before §2** — there is a question about whether to build this at
-all, and it is not rhetorical.
+**Status:** proposal, and §1 is **answered: rebuild it** (owner, 2026-08-08). The question is kept
+below because the answer is what makes the rest worth building, and because a later reader should
+see that it was asked.
 **Supersedes:** the git-backed canvas store (`packages/api/src/canvas/docs.ts` and the per-user
 repositories under `CANVAS_SOURCES_DIR`).
 **Background:** [`artefact-model.md`](artefact-model.md), which is why this exists.
@@ -29,15 +30,13 @@ document. That is licence for a brutal refactor, and it is also a warning.
 image work had a concrete use case that arrived late and immediately falsified a design decision
 that had already been agreed and reviewed. Canvas has no such use case written down anywhere.
 
-So before §2 is built, one of these should be true:
+**Answered 2026-08-08: the owner intends to use canvas and wants it rebuilt.** So the design below
+is what gets built, and C1 to C4 are accepted as real needs rather than inferred ones.
 
-- there is a document you actually want to work on this way, and you can describe the session; or
-- the answer is that canvas should be **deleted**, not rebuilt, and the ~2,400 lines plus a
-  dependency simply go.
-
-Deleting is a legitimate outcome of this spec and is cheaper than every alternative in it. The
-design below is written so that if the answer is "keep it", the build is small; it is not written
-to argue for keeping it.
+One thing still missing, and worth capturing the first time it happens rather than reconstructing
+later: **a described session**. What document, what the model does to it, what you do. The image
+work had no such description for two days and the one that eventually arrived immediately falsified
+a decision that had already been agreed and reviewed. There is no reason to think this is different.
 
 ## 2. Needs
 
