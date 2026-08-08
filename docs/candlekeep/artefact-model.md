@@ -43,12 +43,24 @@ issues a raw `db.deleteFiles(null, user.id)`, an unconditional `deleteMany({user
 per-file hook observes, so anything whose storage deletion failed is dropped from Mongo without
 its bytes being reclaimed.
 
-### 2.2 Canvas documents — the second store
+### 2.2 Canvas — the second store, and it is two things
 
-Bytes live in a git repository on disk at `<CANVAS_SOURCES_DIR>/<userId>/docs`, with a per-user
-`.canvas/index.json`. **No `File` document is ever created.** Ownership is expressed as a
-directory path, which isolates correctly but is **not queryable** alongside anything else.
-Referred to by `docKey`, a validated stable handle recorded in that index.
+Corrected 2026-08-08: an earlier revision of this note treated canvas as one thing. It is two,
+and the distinction decides the whole migration.
+
+**Sources** are reference material the user uploads through the attach menu. `POST
+/api/files/canvas-source` writes the bytes under `<CANVAS_SOURCES_DIR>/<userId>/` and returns.
+**It never calls `createFile`.** So a document the user personally uploaded has no record
+anywhere they can see, cannot be listed, and cannot be deleted. Retrieval over a source is an
+**ephemeral in-memory ChromaDB collection**, explicitly "nothing persisted, auto-gone", so the
+index is not an artefact and needs no lifecycle of its own.
+
+**Docs** are what the model authors. Bytes live in a git repository at
+`<CANVAS_SOURCES_DIR>/<userId>/docs` with a per-user `.canvas/index.json`. Also no `File`
+document. Referred to by `docKey`, a validated stable handle.
+
+Ownership in both cases is a directory path. That isolates correctly and is **not queryable**,
+which is the whole problem: nothing can list it alongside anything else.
 
 Seen: **nowhere by the user.** The only client-side references to canvas are in the attach menu,
 which puts documents *in*. There is no list and no delete control. The only listing is
@@ -99,17 +111,56 @@ feature.
 It is a **listing and identity** problem. What canvas lacks is a queryable, user-scoped record
 that a UI can read, which is exactly what the `user` field gives everything else.
 
-Two shapes worth weighing, and this note deliberately does not choose:
+### 4.1 The error shape, which is worth naming because it recurs
 
-- **A `File` document per canvas document**, holding metadata and pointing at the git-backed
-  content. Canvas keeps its store; it joins the existing view for free, including delete. Cost: a
-  second record to keep consistent with the index, and a `context` value that means "the bytes
-  are not where they usually are".
-- **A canvas listing endpoint plus its own view**, mirroring the files panel. Nothing to keep
-  consistent. Cost: a second thing to build and maintain, and the user has two places to look.
+Canvas needed three things the `File` model does not give: **non-resident structured access**
+(outline, search, get-section, instead of dumping content into context), **version history**, and
+**in-place patching**. To get them it built a store.
 
-The first is less work and gives one place to look. The second is more honest about the two
-stores being different. I would start with the first and only split if the seam actually chafes.
+Only one of those three actually needs a store. Structured access is a *service* and can read from
+any storage. Patching is an *operation*, and `packages/api/src/canvas/diff.ts` and `patch.ts`
+already implement it independently of git. Version history is the single genuine store-level
+requirement, and even that has a `File`-native answer: a document per version, grouped by a stable
+id, latest shown and history a query.
+
+Compare the image work, which needed a *reference* scheme and built exactly that, keeping the
+existing store. Same class of requirement, opposite outcome. **The recurring error is that a new
+capability over artefacts gets implemented as a new place to put artefacts.**
+
+### 4.2 How canvas should have been built
+
+**Sources should never have been a store at all.** They are ordinary uploads. A `File` document
+with `context: 'canvas_source'`, bytes in whatever storage strategy is configured, and the canvas
+container reading them over an authenticated route rather than a bind mount.
+
+That route now exists. `GET /api/mcp/files/:reference` with a signed, principal-bound reference is
+precisely the mechanism canvas sources should have used, and it was built three weeks too late to
+be used by them. There is no design work left here, only wiring.
+
+**Docs should have been `File` documents too**, with git kept — if at all — as a private
+implementation detail of the canvas service keyed by `file_id`, never as the record of existence.
+The record of existence has to live where everything else's does, or it cannot be listed with
+them.
+
+### 4.3 Converging without losing anything
+
+Two steps, independently valuable, neither a rewrite.
+
+**Step 1: give canvas sources a `File` document.** They are already plain uploads, so this is
+adding a `createFile` call to a route that already has everything it needs. They appear in the
+panel, become deletable, and the container can move from the bind mount to the byte route. This is
+the cheap win and it fixes the sharper half of the problem: material the *user* uploaded and
+cannot see.
+
+**Step 2: give canvas docs a `File` document as the record of existence**, keeping git as content
+storage keyed by that `file_id`, and hooking `processDeleteRequest` so removing the record cleans
+the tree. Listing, ownership and delete converge immediately. If the two-record seam then chafes,
+move content to the storage strategy and versions to grouped `File` documents, which removes git
+entirely.
+
+**What not to do:** do not migrate git history into Mongo, and do not touch the ephemeral vector
+index. It is auto-gone by design, it is not an artefact, and giving it a lifecycle would be
+inventing exactly the kind of machinery this note exists to prevent.
 
 ## 5. One distinction that must stay sharp
 
