@@ -42,10 +42,10 @@ a decision that had already been agreed and reviewed. There is no reason to thin
 
 | | Need | Provenance |
 | --- | --- | --- |
-| **C1** | Work on a document too large to sit in the model's context, without it sitting there | inferred from what canvas does; **not validated** |
-| **C2** | The model can find its way around it: outline, search, fetch a section | inferred; **not validated** |
-| **C3** | The model can change part of it without rewriting the whole | inferred; **not validated** |
-| **C4** | Bring in reference material and use it to drive edits | inferred; **not validated** |
+| **C1** | Work on a document too large to sit in the model's context, without it sitting there | what canvas does; **accepted** 2026-08-08 |
+| **C2** | The model can find its way around it: outline, search, fetch a section | as above |
+| **C3** | The model can change part of it without rewriting the whole | as above |
+| **C4** | Bring in reference material and use it to drive edits | as above |
 | **C5** | **See and delete your own documents yourself** | **owner, 2026-08-08** |
 | **C6** | Nobody else in the household can reach yours | **owner, 2026-08-08** |
 | **C7** | Turning it on changes nothing else | author |
@@ -54,7 +54,14 @@ C5 is the reason this spec exists. Today the **model** can list a user's canvas 
 `canvas_doc_list` and the **user** cannot, and deletion is reachable only by asking the model to
 call a tool. Every other artefact in the system inverts that.
 
-C1 to C4 are what the current implementation does. Nobody has confirmed they are wanted.
+C1 to C4 are what the current implementation does, and the owner has confirmed they are wanted.
+What is still missing is a described session, per §1.
+
+**C8, added 2026-08-08: a canvas document can be filed like any other artefact.** The owner wants
+directories over their files, and this is the strongest argument for the convergence in §3: a
+canvas document that is a `File` document inherits organisation for free, while one in its own
+store would need its own parallel notion of where it sits. Specified separately; see
+[`spec-file-organisation.md`](spec-file-organisation.md).
 
 ## 3. The design, in one paragraph
 
