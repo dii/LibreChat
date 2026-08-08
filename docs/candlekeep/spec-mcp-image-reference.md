@@ -1,6 +1,6 @@
 # Spec: Conversation Images for MCP Tools
 
-**Status:** proposal, ready for implementation by someone with no prior context
+**Status:** **built**, not yet deployed. Slices 1-3 are implemented and tested; what remains is configuration, deployment and an end-to-end run. See §15.
 **Built for:** this fork, with one known consumer. Shaped so it could be generalised and offered
 upstream later, but not written as an upstream pull request. See §11.
 **Supersedes:** the `~/scratch/comfyui-upload-plan-v{1..7}` series, whose conclusions survive in §10.
