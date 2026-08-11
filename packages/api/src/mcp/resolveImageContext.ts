@@ -25,7 +25,7 @@ const MESSAGE_SELECT = 'messageId parentMessageId files attachments content';
  * `Object.values`, so the key is free; it names the feature for anyone reading
  * a dump of the map.
  */
-export const MCP_CONVERSATION_IMAGES_KEY = 'mcp_conversation_images';
+export const MCP_CONVERSATION_IMAGES_KEY: string = 'mcp_conversation_images';
 
 /**
  * What we require of a persisted message here. Deliberately stricter than

@@ -11,8 +11,8 @@ import { createHmac, timingSafeEqual } from 'crypto';
  * asserted by the caller; it is read from the verified payload.
  */
 
-export const FILE_REF_PREFIX = 'lcimg_';
-export const DEFAULT_FILE_REF_TTL_MS = 30 * 60 * 1000;
+export const FILE_REF_PREFIX: string = 'lcimg_';
+export const DEFAULT_FILE_REF_TTL_MS: number = 30 * 60 * 1000;
 
 /** Truncated HMAC-SHA256. 128 bits is far beyond forgery reach here. */
 const MAC_BYTES = 16;

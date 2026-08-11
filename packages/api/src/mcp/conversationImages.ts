@@ -14,8 +14,8 @@
  */
 
 /** Bounded because too many near-identical options makes the model choose badly, not to save tokens. */
-export const DEFAULT_MAX_SOURCES = 10;
-export const DEFAULT_MAX_ATTEMPTS = 20;
+export const DEFAULT_MAX_SOURCES: number = 10;
+export const DEFAULT_MAX_ATTEMPTS: number = 20;
 
 /** Longer than this is not helping the model tell two attempts apart. */
 const MAX_DESCRIPTION_CHARS = 120;
