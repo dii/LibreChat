@@ -1,4 +1,5 @@
 import { Constants } from 'librechat-data-provider';
+import { logger } from '@librechat/data-schemas';
 import { getThreadData } from '~/utils/message';
 import { buildConversationImageContext } from './conversationImageContext';
 import type { ThreadImageMessage, ImageFileDocument } from './conversationImages';
@@ -92,6 +93,23 @@ const carriesServerTools = (tools: unknown[] | undefined, serverName: string): b
   return (tools ?? []).some((tool) => typeof tool === 'string' && tool.endsWith(marker));
 };
 
+/**
+ * Every exit below this point is a silent `null`, and they mean very different
+ * things: the tools were never offered, the user owns none of the ids, the
+ * thread held no images. Told apart only by log, because the symptom they all
+ * share is a model that never mentions an image, which is also exactly what a
+ * correctly-offered-but-ignored context looks like.
+ *
+ * Level is deliberate. The gate miss below is `debug` because it fires on
+ * every request in the deployment, image-related or not. Everything after the
+ * gate is `info`, because it fires only once the agent actually carries the
+ * image tools, which is rare and is the case anyone is ever debugging.
+ * `debug` would have been the tidier-looking choice and a useless one:
+ * `DEBUG_LOGGING` is unset on the deployed container (checked 2026-08-11), so
+ * a debug-level diagnostic here would never have appeared in production.
+ */
+const LOG_PREFIX = '[conversationImages]';
+
 export async function resolveConversationImageContext({
   agentTools,
   serverName,
@@ -115,6 +133,10 @@ export async function resolveConversationImageContext({
     return null;
   }
   if (!carriesServerTools(agentTools, serverName)) {
+    logger.debug(
+      `${LOG_PREFIX} not offered: no agent tool ends with "${Constants.mcp_delimiter}${serverName}"`,
+      { toolCount: agentTools?.length ?? 0 },
+    );
     return null;
   }
 
@@ -143,6 +165,10 @@ export async function resolveConversationImageContext({
     }
 
     if (fileIds.size === 0) {
+      logger.info(`${LOG_PREFIX} not offered: no image ids in the thread or the request`, {
+        conversationId,
+        threadMessages: threadMessages.length,
+      });
       return null;
     }
 
@@ -162,6 +188,10 @@ export async function resolveConversationImageContext({
     }
     const documents = await getFiles(filter, null, null);
     if (!documents?.length) {
+      logger.info(
+        `${LOG_PREFIX} not offered: none of the ${fileIds.size} id(s) resolve to a file owned by this user`,
+        { conversationId },
+      );
       return null;
     }
 
@@ -173,6 +203,10 @@ export async function resolveConversationImageContext({
       authorised = await filterFiles({ files: documents, userId, role, agentId });
     }
     if (!authorised?.length) {
+      logger.info(
+        `${LOG_PREFIX} not offered: agent-access filter rejected all ${documents.length} file(s)`,
+        { conversationId, agentId },
+      );
       return null;
     }
 
@@ -182,7 +216,7 @@ export async function resolveConversationImageContext({
       ? threadMessages
       : [{ files: Array.from(fileIds).map((file_id) => ({ file_id })) }];
 
-    return buildConversationImageContext({
+    const context = buildConversationImageContext({
       messages: messagesForBuild,
       files: authorised,
       userId,
@@ -191,10 +225,26 @@ export async function resolveConversationImageContext({
       maxSources,
       maxAttempts,
     });
-  } catch {
+
+    if (!context) {
+      logger.info(
+        `${LOG_PREFIX} not offered: ${authorised.length} file(s) held nothing classifiable as a render or an upload`,
+        { conversationId },
+      );
+      return null;
+    }
+
+    logger.info(`${LOG_PREFIX} offered image context from ${authorised.length} file(s)`, {
+      conversationId,
+      chars: context.length,
+    });
+    return context;
+  } catch (error) {
     /* Swallowed deliberately. This runs inside request initialisation, where a
      * throw would fail the whole conversation over an image that could simply
-     * have gone unmentioned. The caller logs; the user still gets their turn. */
+     * have gone unmentioned. Logged here rather than by the caller, which only
+     * awaits this and cannot tell a thrown error from an absent image. */
+    logger.warn(`${LOG_PREFIX} failed; the turn proceeds without image context`, error);
     return null;
   }
 }
