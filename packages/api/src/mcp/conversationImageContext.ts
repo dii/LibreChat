@@ -31,7 +31,14 @@ const line = (image: ConversationImage, reference: string, ordinal?: number): st
   /* Only quote a description that exists. An empty pair of quotes reads as an
    * image with no prompt rather than one whose prompt could not be recovered. */
   const described = image.description ? ` "${image.description}"` : '';
-  return `  ${number}ref=${reference}${name}${dimensions(image)}${described}`;
+  /* The reference is a BARE leading token, deliberately. It was once rendered
+   * as `ref=<reference>`, and on 2026-08-11 a model copied the label into the
+   * value on 2 of 8 calls, passing `ref=lcimg_...` as `source`. The broker
+   * rejected those, and the model reported to the user that its photo had been
+   * lost mid-session. `=` glues a label to a value with no separator, so
+   * anything of that shape invites the same mistake; a token that starts the
+   * line has nothing in front of it to copy. */
+  return `  ${number}${reference}${name}${dimensions(image)}${described}`;
 };
 
 /**
@@ -68,7 +75,10 @@ export function renderImageContext(
   }
 
   const parts: string[] = [
-    'Images in this conversation. Use a reference exactly as written below.',
+    'Images in this conversation. Each line below starts with a reference.',
+    'Pass a reference as `source`, copied EXACTLY: it begins with "lcimg_" and',
+    'ends before the first space. Copy nothing that follows it on the line, and',
+    'add no prefix of your own.',
     'Do not reuse a reference from earlier in the conversation; they expire.',
     'Do not invent a reference.',
   ];

@@ -83,7 +83,10 @@ describe('renderImageContext', () => {
         set({ attempts: [attempt('r1', 1)], totalAttempts: 1 }),
         mint,
       ) as string;
-      expect(text).not.toMatch(/source/i);
+      /* The section, not the word. The header instructs the model to pass a
+       * reference as `source`, so a bare /source/i also matches guidance that
+       * must always be present. */
+      expect(text).not.toMatch(/SOURCE PHOTOS/);
     });
   });
 
