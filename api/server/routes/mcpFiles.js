@@ -4,6 +4,7 @@ const { logger } = require('@librechat/data-schemas');
 const { FileSources } = require('librechat-data-provider');
 const { verifyFileRef } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
+const { getAppConfig } = require('~/server/services/Config');
 const { getFiles } = require('~/models');
 
 /**
@@ -63,6 +64,20 @@ const handleMcpFileGet = async (req, res) => {
   }
 
   try {
+    /* `configMiddleware` derives `req.config` from `req.user`, and this route is
+     * mounted outside the JWT chain precisely so that it has no `req.user`. The
+     * storage strategies read it: `getLocalFileStream` opens with
+     * `const appConfig = req.config` and then `appConfig.paths.uploads`, so
+     * without this every fetch throws "Cannot read properties of undefined
+     * (reading 'paths')" and answers as a miss. That is what it did in
+     * production on 2026-08-11 — the model held a valid reference, used it
+     * correctly, and got a bare 404 six times over.
+     *
+     * Scoped from the VERIFIED reference, never from anything the caller sent,
+     * for the same reason the query below is. This is the second thing the
+     * out-of-chain mount silently dropped; tenant scoping was the first. */
+    req.config = await getAppConfig({ tenantId: ref.tenantId });
+
     /* Scoped to the principal named in the verified reference, never to
      * anything the caller asserted. `tenantId` is applied here because this
      * route is mounted outside the JWT chain, so tenantContextMiddleware has

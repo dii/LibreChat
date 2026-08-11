@@ -12,6 +12,7 @@ const request = require('supertest');
 const mockVerifyFileRef = jest.fn();
 const mockGetFiles = jest.fn();
 const mockGetDownloadStream = jest.fn();
+const mockGetAppConfig = jest.fn().mockResolvedValue({ paths: { uploads: '/tmp/uploads' } });
 
 jest.mock('@librechat/api', () => ({ verifyFileRef: (...args) => mockVerifyFileRef(...args) }));
 jest.mock('@librechat/data-schemas', () => ({
@@ -20,6 +21,13 @@ jest.mock('@librechat/data-schemas', () => ({
 jest.mock('~/models', () => ({ getFiles: (...args) => mockGetFiles(...args) }));
 jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: () => ({ getDownloadStream: (...args) => mockGetDownloadStream(...args) }),
+}));
+/* Stubbed at the boundary, like `@librechat/api` above: requiring the real
+ * Config service drags in the violations cache and the whole app-config graph,
+ * which this route spec has no business booting. What matters here is only that
+ * the handler populates `req.config` before touching a storage strategy. */
+jest.mock('~/server/services/Config', () => ({
+  getAppConfig: (...args) => mockGetAppConfig(...args),
 }));
 
 const { Readable } = require('stream');
@@ -205,6 +213,31 @@ describe('GET /api/mcp/files/:reference', () => {
         expect.anything(),
         '/images/user-a/file-1.png',
       );
+    });
+
+    /* Regression, production 2026-08-11. `configMiddleware` populates
+     * `req.config` from `req.user`, and this route is mounted outside the JWT
+     * chain so it has neither. `getLocalFileStream` reads `req.config.paths`,
+     * so every fetch threw "Cannot read properties of undefined (reading
+     * 'paths')" and — because the catch answers like every other refusal — came
+     * back as a bare 404. The model held a valid reference, used it correctly,
+     * and was told six times that its own photo did not exist. Nothing in the
+     * suite caught it because the strategy is stubbed here, so this asserts the
+     * request the strategy receives rather than the strategy's own behaviour. */
+    it('populates req.config before a storage strategy is given the request', async () => {
+      await get();
+      const [passedReq] = mockGetDownloadStream.mock.calls[0];
+      expect(passedReq.config).toEqual({ paths: { uploads: '/tmp/uploads' } });
+    });
+
+    it('scopes the app config to the tenant named in the verified reference', async () => {
+      mockVerifyFileRef.mockReturnValue({
+        fileId: IMAGE.file_id,
+        userId: IMAGE.user,
+        tenantId: 'tenant-a',
+      });
+      await get();
+      expect(mockGetAppConfig).toHaveBeenCalledWith({ tenantId: 'tenant-a' });
     });
   });
 });
