@@ -89,6 +89,7 @@ const {
   resolveYouTubeInjectionConfig,
   decrementPendingRequest,
   maybePrewarmCodeSandbox,
+  isNonVisionModel,
 } = require('@librechat/api');
 const {
   Run,
@@ -1012,6 +1013,27 @@ class AgentClient extends BaseClient {
       },
       VisionModes.agents,
     );
+
+    /* A model on the deny-list gets the file records but no image parts. There
+     * is no capability gate anywhere else on this path, so without this an
+     * image attached to a text-only model reaches the provider and fails there:
+     * against ollama a hard 500 that kills the turn before the model runs.
+     *
+     * `encodeAndFormat` is still called rather than skipped. It is the single
+     * place that builds the `files` metadata shape, and it already has this
+     * exact semantic internally (`if (!imageContent) { push(fileMetadata) }`),
+     * so reproducing it here would duplicate upstream logic that has to stay
+     * identical across rebases. The wasted encode is the deliberate price of
+     * not owning a second copy of that shape. */
+    const runModel = this.model ?? this.options.agent?.model_parameters?.model;
+    if (image_urls.length && isNonVisionModel(runModel, process.env.NON_VISION_MODELS)) {
+      logger.warn(
+        `[AgentClient] withheld ${image_urls.length} image part(s) from "${runModel}", which is listed in NON_VISION_MODELS. The file(s) stay in the conversation; if the model has no other route to them (e.g. an image-reference tool), it does not know they exist.`,
+      );
+      message.image_urls = undefined;
+      return files;
+    }
+
     message.image_urls = image_urls.length ? image_urls : undefined;
     return files;
   }
