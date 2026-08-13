@@ -73,7 +73,10 @@ describe('POST /canvas-admin/delete route', () => {
   });
 
   it('returns 404 for a missing doc', async () => {
-    const res = await withAuth(request(app).post('/delete')).send({ userId, docKey: 'missing-1234' });
+    const res = await withAuth(request(app).post('/delete')).send({
+      userId,
+      docKey: 'missing-1234',
+    });
     expect(res.status).toBe(404);
   });
 
@@ -95,7 +98,10 @@ describe('POST /canvas-admin/delete route', () => {
   });
 
   it('rejects an invalid user with 400', async () => {
-    const res = await withAuth(request(app).post('/delete')).send({ userId: '../etc', docKey: 'x-1234' });
+    const res = await withAuth(request(app).post('/delete')).send({
+      userId: '../etc',
+      docKey: 'x-1234',
+    });
     expect(res.status).toBe(400);
   });
 });

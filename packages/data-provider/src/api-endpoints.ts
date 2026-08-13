@@ -312,6 +312,25 @@ export const fileDelete = () => `${BASE_URL}/api/files`;
 /** Raw drop-folder write for the external "canvas" ingest server; bypasses the
  *  normal file/context pipeline (content never enters model context). */
 export const canvasSource = () => `${BASE_URL}/api/files/canvas-source`;
+
+/* Folders for user files. `files()` takes an optional folderId: absent lists
+   everything (the pre-folders behaviour), empty string means unfiled. */
+export const fileFolders = () => `${BASE_URL}/api/files/folders`;
+export const fileFolder = (folderId: string) =>
+  `${BASE_URL}/api/files/folders/${encodeURIComponent(folderId)}`;
+export const fileFolderContents = (folderId: string) =>
+  `${BASE_URL}/api/files/folders/${encodeURIComponent(folderId)}/contents`;
+export const filesInFolder = (folderId?: string | null, subtree?: boolean) => {
+  if (folderId === undefined) {
+    return `${BASE_URL}/api/files`;
+  }
+  const params = new URLSearchParams({ folderId: folderId ?? '' });
+  if (subtree === true) {
+    params.set('subtree', 'true');
+  }
+  return `${BASE_URL}/api/files?${params.toString()}`;
+};
+export const setFilesFolder = () => `${BASE_URL}/api/files/folder`;
 export const fileDownload = (userId: string, fileId: string) =>
   `${BASE_URL}/api/files/download/${userId}/${fileId}`;
 /* Deferred-preview lifecycle endpoint. Returns

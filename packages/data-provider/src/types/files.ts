@@ -102,7 +102,26 @@ export type FileConfigInput = {
   checkType?: (fileType: string, supportedTypes: RegExp[]) => boolean;
 };
 
+/**
+ * A folder in the user's file library.
+ *
+ * `path` is the folder's own materialised path (`/tattoo/references`), which is
+ * why a rename rewrites folder rows and never file rows.
+ */
+export type TFileFolder = {
+  _id: string;
+  user: string;
+  name: string;
+  parentId: string | null;
+  path: string;
+  position?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type TFile = {
+  /** Null or a folder that no longer exists both mean unfiled. */
+  folderId?: string | null;
   _id?: string;
   __v?: number;
   user: string;

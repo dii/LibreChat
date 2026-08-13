@@ -444,6 +444,54 @@ export const getFiles = (): Promise<f.TFile[]> => {
   return request.get(endpoints.files());
 };
 
+/* Folders for user files. */
+
+export const getFileFolders = (parentId?: string | null): Promise<f.TFileFolder[]> => {
+  const url =
+    parentId === undefined
+      ? endpoints.fileFolders()
+      : `${endpoints.fileFolders()}?parentId=${encodeURIComponent(parentId ?? '')}`;
+  return request.get(url);
+};
+
+export const createFileFolder = (payload: {
+  name: string;
+  parentId?: string | null;
+}): Promise<f.TFileFolder> => {
+  return request.post(endpoints.fileFolders(), payload);
+};
+
+export const updateFileFolder = (
+  folderId: string,
+  payload: { name?: string; parentId?: string | null },
+): Promise<f.TFileFolder> => {
+  return request.patch(endpoints.fileFolder(folderId), payload);
+};
+
+export const getFileFolderContents = (
+  folderId: string,
+): Promise<{ folders: number; files: number }> => {
+  return request.get(endpoints.fileFolderContents(folderId));
+};
+
+export const deleteFileFolder = (folderId: string): Promise<{ folders: number; files: number }> => {
+  return request.delete(endpoints.fileFolder(folderId));
+};
+
+export const getFilesInFolder = (
+  folderId?: string | null,
+  subtree?: boolean,
+): Promise<f.TFile[]> => {
+  return request.get(endpoints.filesInFolder(folderId, subtree));
+};
+
+export const setFilesFolder = (payload: {
+  fileIds: string[];
+  folderId: string | null;
+}): Promise<{ moved: number }> => {
+  return request.patch(endpoints.setFilesFolder(), payload);
+};
+
 /**
  * Poll the lifecycle of an inline file preview. Returns the smallest
  * shape needed to drive the UI:
