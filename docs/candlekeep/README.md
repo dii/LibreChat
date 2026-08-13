@@ -59,3 +59,31 @@ This directory covers **LibreChat**. It is not the house record.
   states the boundary and what the consumer must do.
 - Status, decisions and the full design history including seven superseded plan versions:
   `chanter/works/comfyui-image-uploads.md`.
+
+## Running the checks
+
+`./docs/candlekeep/check.sh all` before building an image. It runs upstream's own CI pipeline in a
+container, because gorion has no local node.
+
+**The build is the test.** `packages/api` is bundled with `--isolatedDeclarations`, a stricter
+contract than the type checker's, and only the real build enforces it. Measured 2026-08-14 on the
+exact statement that took production down on 2026-08-08: `tsc --noEmit` exits 0, `npm run build:api`
+exits 1 with `TS9010` naming the file and line, in about two seconds. The note at the time saying
+"nothing local could have caught it" was wrong, and believing it cost a week of working without a
+feedback loop.
+
+**Failures are compared against a recorded baseline**, not counted. `docs/candlekeep/test-baselines/`
+holds the suites that fail on a clean tree; the script reports only what is new. A raw count is not
+evidence here: on 2026-08-07 one run reported an 81-test regression that a re-run showed did not
+exist. Re-record a baseline with `./check.sh baseline <workspace>` and commit it as its own reviewed
+change, never to turn a red run green.
+
+Two things worth knowing before trusting a run:
+
+- `node_modules` was 3 weeks stale against `package-lock.json` (predating the 153-commit merge) until
+  2026-08-14, which alone caused 226 test failures from one missing transitive dependency. If results
+  look absurd, check that first: `npm ci` in the same container.
+- The checks run on the **glibc** node image, not the alpine one production uses, because
+  `mongodb-memory-server` cannot start mongod on musl — that accounted for 276 failures across 92 of
+  184 `api` suites. So these checks prove types, contracts and behaviour; they do not prove the alpine
+  image links. That is still verified on alaundo before deploy, per the custom-image runbook.
