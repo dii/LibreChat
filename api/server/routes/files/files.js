@@ -54,7 +54,16 @@ const isAgentToolResourceKey = (toolResource) =>
 router.get('/', async (req, res) => {
   try {
     const appConfig = req.config;
-    const files = await db.getFiles({ user: req.user.id });
+    /* `folderId` absent lists everything, which is the pre-folders behaviour and
+       what the existing panel still asks for. `folderId=` (empty) means unfiled,
+       and that is NOT simply `folderId: null` — see db.fileFilter. */
+    const { folderId, subtree } = req.query;
+    const filter = await db.fileFilter({
+      user: req.user.id,
+      ...(folderId === undefined ? {} : { folderId: folderId || null }),
+      subtree: subtree === 'true',
+    });
+    const files = await db.getFiles(filter);
     if (appConfig.fileStrategy === FileSources.s3) {
       try {
         const cache = getLogStores(CacheKeys.S3_EXPIRY_INTERVAL);
@@ -633,6 +642,36 @@ router.get('/download/:userId/:file_id', fileAccess, async (req, res) => {
   } catch (error) {
     logger.error('[DOWNLOAD ROUTE] Error downloading file:', error);
     res.status(500).send('Error downloading file');
+  }
+});
+
+/**
+ * File or unfile a set of files.
+ * @route PATCH /files/folder
+ * Body: { fileIds: string[], folderId: string | null }
+ *
+ * Both ids are caller-supplied and both are validated: the folder must be this
+ * user's, and the update is scoped to this user's files, so naming another
+ * user's file id moves nothing rather than moving theirs.
+ */
+router.patch('/folder', async (req, res) => {
+  try {
+    const { fileIds, folderId } = req.body ?? {};
+    if (!Array.isArray(fileIds)) {
+      return res.status(400).json({ message: 'fileIds must be an array' });
+    }
+    const moved = await db.setFilesFolder({
+      user: req.user.id,
+      fileIds,
+      folderId: folderId ?? null,
+    });
+    res.status(200).json({ moved });
+  } catch (error) {
+    if (error?.code === 'not_found') {
+      return res.status(404).json({ message: error.message, code: error.code });
+    }
+    logger.error('[PATCH /files/folder] Error filing files:', error);
+    res.status(400).json({ message: 'Error in request', error: error.message });
   }
 });
 

@@ -13,6 +13,7 @@ const { avatar: agentAvatarRouter } = require('~/server/routes/agents/v1');
 const { createMulterInstance } = require('./multer');
 
 const { router: canvas } = require('./canvas');
+const folders = require('./folders');
 const files = require('./files');
 const images = require('./images');
 const avatar = require('./avatar');
@@ -72,6 +73,7 @@ const initialize = async () => {
   );
 
   router.use('/canvas-source', canvas);
+  router.use('/folders', folders);
   router.use('/', files);
   router.use('/images', images);
   router.use('/images/avatar', avatar);

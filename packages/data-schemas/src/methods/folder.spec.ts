@@ -78,9 +78,12 @@ describe('creating folders', () => {
     await expect(methods.createFolder({ user: BOB, name: 'tattoo' })).resolves.toBeDefined();
   });
 
-  it.each(['', '   ', 'has/slash', 'x'.repeat(121)])('rejects the invalid name %p', async (name) => {
-    await expect(methods.createFolder({ user: ALICE, name })).rejects.toThrow(/name/i);
-  });
+  it.each(['', '   ', 'has/slash', 'x'.repeat(121)])(
+    'rejects the invalid name %p',
+    async (name) => {
+      await expect(methods.createFolder({ user: ALICE, name })).rejects.toThrow(/name/i);
+    },
+  );
 });
 
 describe('isolation (F3)', () => {
@@ -104,7 +107,7 @@ describe('isolation (F3)', () => {
     expect((foreign as FolderError).code).toBe((absent as FolderError).code);
   });
 
-  it('never lists another user\'s folders', async () => {
+  it("never lists another user's folders", async () => {
     await methods.createFolder({ user: BOB, name: 'bobs' });
     await methods.createFolder({ user: ALICE, name: 'alices' });
     const listed = await methods.listFolders(ALICE);
@@ -265,5 +268,136 @@ describe('subtree and deletion', () => {
     await methods.createFolder({ user: BOB, name: 'b' });
     expect(await methods.deleteUserFolders(ALICE)).toBe(1);
     expect(await methods.listFolders(BOB)).toHaveLength(1);
+  });
+});
+
+describe('filing files into folders (slice 2)', () => {
+  /** Minimal File model: slice 2 only touches user, file_id and folderId. */
+  function fileModel() {
+    if (!mongoose.models.File) {
+      const schema = new mongoose.Schema(
+        {
+          file_id: { type: String, index: true },
+          user: { type: String, index: true },
+          filename: String,
+          folderId: { type: String, default: null, index: true },
+        },
+        { timestamps: true },
+      );
+      mongoose.model('File', schema);
+    }
+    return mongoose.models.File;
+  }
+
+  async function makeFile(user: string, file_id: string, folderId: string | null = null) {
+    return fileModel().create({ user, file_id, filename: `${file_id}.png`, folderId });
+  }
+
+  beforeAll(() => {
+    fileModel();
+  });
+
+  afterEach(async () => {
+    await mongoose.models.File.deleteMany({});
+  });
+
+  it('files and unfiles', async () => {
+    const folder = await methods.createFolder({ user: ALICE, name: 'tattoo' });
+    await makeFile(ALICE, 'f1');
+    expect(
+      await methods.setFilesFolder({ user: ALICE, fileIds: ['f1'], folderId: String(folder._id) }),
+    ).toBe(1);
+    let filter = await methods.fileFilter({ user: ALICE, folderId: String(folder._id) });
+    expect(await mongoose.models.File.countDocuments(filter)).toBe(1);
+
+    await methods.setFilesFolder({ user: ALICE, fileIds: ['f1'], folderId: null });
+    filter = await methods.fileFilter({ user: ALICE, folderId: String(folder._id) });
+    expect(await mongoose.models.File.countDocuments(filter)).toBe(0);
+  });
+
+  it("will not file into another user's folder", async () => {
+    const bobs = await methods.createFolder({ user: BOB, name: 'bobs' });
+    await makeFile(ALICE, 'f1');
+    await expect(
+      methods.setFilesFolder({ user: ALICE, fileIds: ['f1'], folderId: String(bobs._id) }),
+    ).rejects.toThrow(/No such folder/);
+  });
+
+  it("will not move another user's file, even into a folder you own", async () => {
+    const mine = await methods.createFolder({ user: ALICE, name: 'mine' });
+    await makeFile(BOB, 'bobs-file');
+    const moved = await methods.setFilesFolder({
+      user: ALICE,
+      fileIds: ['bobs-file'],
+      folderId: String(mine._id),
+    });
+    expect(moved).toBe(0);
+    const bobsFile = await mongoose.models.File.findOne({ file_id: 'bobs-file' }).lean();
+    expect((bobsFile as { folderId: string | null }).folderId).toBeNull();
+  });
+
+  it('lists a file with a DANGLING folderId as unfiled rather than hiding it', async () => {
+    /* A folder delete can fail partway. A file nobody can see cannot be deleted
+       either, so surfacing it at the root is the lesser of the two failures. */
+    await makeFile(ALICE, 'orphan', String(new mongoose.Types.ObjectId()));
+    const filter = await methods.fileFilter({ user: ALICE, folderId: null });
+    const found = await mongoose.models.File.find(filter).lean();
+    expect(found.map((f) => (f as { file_id: string }).file_id)).toEqual(['orphan']);
+  });
+
+  it('does not list a properly filed file as unfiled', async () => {
+    const folder = await methods.createFolder({ user: ALICE, name: 'tattoo' });
+    await makeFile(ALICE, 'filed', String(folder._id));
+    await makeFile(ALICE, 'loose');
+    const filter = await methods.fileFilter({ user: ALICE, folderId: null });
+    const found = await mongoose.models.File.find(filter).lean();
+    expect(found.map((f) => (f as { file_id: string }).file_id)).toEqual(['loose']);
+  });
+
+  it('lists a subtree of files', async () => {
+    const parent = await methods.createFolder({ user: ALICE, name: 'p' });
+    const child = await methods.createFolder({
+      user: ALICE,
+      name: 'c',
+      parentId: String(parent._id),
+    });
+    await makeFile(ALICE, 'in-parent', String(parent._id));
+    await makeFile(ALICE, 'in-child', String(child._id));
+
+    const shallow = await methods.fileFilter({ user: ALICE, folderId: String(parent._id) });
+    expect(await mongoose.models.File.countDocuments(shallow)).toBe(1);
+
+    const deep = await methods.fileFilter({
+      user: ALICE,
+      folderId: String(parent._id),
+      subtree: true,
+    });
+    expect(await mongoose.models.File.countDocuments(deep)).toBe(2);
+  });
+
+  it('every filter is scoped to the user, including the everything case', async () => {
+    await makeFile(BOB, 'bobs');
+    await makeFile(ALICE, 'alices');
+    for (const folderId of [undefined, null]) {
+      const filter = await methods.fileFilter({ user: ALICE, folderId });
+      const found = await mongoose.models.File.find(filter).lean();
+      expect(found.every((f) => (f as { user: string }).user === ALICE)).toBe(true);
+    }
+  });
+
+  it('counts what a delete would remove, so the warning can be a decision', async () => {
+    const parent = await methods.createFolder({ user: ALICE, name: 'p' });
+    const child = await methods.createFolder({
+      user: ALICE,
+      name: 'c',
+      parentId: String(parent._id),
+    });
+    await makeFile(ALICE, 'a', String(parent._id));
+    await makeFile(ALICE, 'b', String(child._id));
+    await makeFile(ALICE, 'elsewhere');
+    expect(await methods.countFolderContents(ALICE, String(parent._id))).toEqual({
+      folders: 1,
+      files: 2,
+    });
   });
 });

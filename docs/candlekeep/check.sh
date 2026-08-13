@@ -98,9 +98,16 @@ cmd_test() {
   # runs in separate CI workflows with services attached. Invoking bare jest here
   # produced a 36-suite "baseline" of infrastructure failures that had nothing to
   # do with any change, which would have buried a real regression in noise.
+  # A filtered run is forced SERIAL. Suites here spin up their own
+  # MongoMemoryServer, and several racing in parallel workers fail on contention
+  # rather than on anything in the code. Measured 2026-08-14: `server/routes/files`
+  # failed 3 suites on a CLEAN tree under default concurrency and passed serially,
+  # which the baseline comparison had already reported as "these are yours".
+  # A baseline recorded from a full run is therefore not valid for a filtered run
+  # under the same concurrency, so the filtered run changes the concurrency instead.
   local jest_cmd
   if [[ -n "$pattern" ]]; then
-    jest_cmd="npm run test:ci -- --silent ${pattern}"
+    jest_cmd="npm run test:ci -- --silent --runInBand ${pattern}"
   else
     jest_cmd="npm run test:ci -- --silent"
   fi
