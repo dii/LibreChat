@@ -151,6 +151,15 @@ const file: Schema<IMongoFile> = new Schema(
       type: Date,
       expires: 3600, // 1 hour in seconds
     },
+    folderId: {
+      /* Organisation only: null means unfiled, and a folderId whose folder no
+       * longer exists is ALSO treated as unfiled by the listing, so a partial
+       * folder delete surfaces the file at the root rather than hiding it. A
+       * file nobody can see cannot be deleted either. */
+      type: String,
+      default: null,
+      index: true,
+    },
     tenantId: {
       type: String,
       index: true,
