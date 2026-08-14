@@ -27,6 +27,7 @@ const LIBRARY_CONTEXTS = new Set<string>([
   FileContext.image_generation,
   FileContext.assistants,
   FileContext.agents,
+  FileContext.canvas_source,
 ]);
 
 export default function FilesPanel() {

@@ -12,6 +12,7 @@ const request = require('supertest');
 const mockVerifyFileRef = jest.fn();
 const mockUpdateFile = jest.fn();
 const mockSaveBuffer = jest.fn();
+const mockCreateFile = jest.fn();
 const mockGetFiles = jest.fn();
 const mockGetDownloadStream = jest.fn();
 const mockGetAppConfig = jest.fn().mockResolvedValue({ paths: { uploads: '/tmp/uploads' } });
@@ -28,6 +29,7 @@ jest.mock('@librechat/data-schemas', () => ({
 jest.mock('~/models', () => ({
   getFiles: (...args) => mockGetFiles(...args),
   updateFile: (...args) => mockUpdateFile(...args),
+  createFile: (...args) => mockCreateFile(...args),
 }));
 jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: () => ({
@@ -340,5 +342,91 @@ describe('PUT /api/mcp/files/:reference — the write scope', () => {
     const res = await put({ content: 'héllo' });
     expect(res.body.bytes).toBe(6);
     expect(mockUpdateFile).toHaveBeenCalledWith(expect.objectContaining({ bytes: 6 }));
+  });
+});
+
+const post = (body = { content: 'doc', filename: 'notes.md' }, token = TOKEN) => {
+  const req = request(buildApp()).post('/api/mcp/files/lcref_body.mac');
+  return (token == null ? req : req.set('Authorization', `Bearer ${token}`)).send(body);
+};
+
+describe('POST /api/mcp/files/:reference — the create scope', () => {
+  const CREATOR = { userId: 'user-a', scope: 'c', conversationId: 'convo-1' };
+
+  beforeEach(() => {
+    mockSaveBuffer.mockResolvedValue('/uploads/user-a/documents/notes.md');
+    mockCreateFile.mockImplementation(async (data) => data);
+  });
+
+  it('refuses a READ reference', async () => {
+    mockVerifyFileRef.mockReturnValue(PRINCIPAL);
+    expect((await post()).status).toBe(404);
+    expect(mockCreateFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses a WRITE reference', async () => {
+    mockVerifyFileRef.mockReturnValue({ ...PRINCIPAL, scope: 'w' });
+    expect((await post()).status).toBe(404);
+    expect(mockCreateFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses a create reference carrying no conversation', async () => {
+    mockVerifyFileRef.mockReturnValue({ userId: 'user-a', scope: 'c' });
+    expect((await post()).status).toBe(404);
+  });
+
+  it('creates the file for the principal and conversation in the reference', async () => {
+    mockVerifyFileRef.mockReturnValue(CREATOR);
+    const res = await post({ content: 'hello', filename: 'notes.md' });
+    expect(res.status).toBe(201);
+    expect(mockCreateFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: 'user-a',
+        conversationId: 'convo-1',
+        filename: 'notes.md',
+        context: 'canvas_source',
+        bytes: 5,
+      }),
+      true,
+    );
+  });
+
+  it('never takes the owner or conversation from the request body', async () => {
+    mockVerifyFileRef.mockReturnValue(CREATOR);
+    await post({ content: 'x', filename: 'n.md', user: 'user-b', conversationId: 'other' });
+    expect(mockCreateFile).toHaveBeenCalledWith(
+      expect.objectContaining({ user: 'user-a', conversationId: 'convo-1' }),
+      true,
+    );
+  });
+
+  it('cannot be aimed at an existing file, because it carries no file id', async () => {
+    /* This is what makes create safe next to write: there is no id in the
+       payload to overwrite, and the id is minted here, not accepted. */
+    mockVerifyFileRef.mockReturnValue({ ...CREATOR, fileId: 'victim-file' });
+    const res = await post();
+    expect(res.status).toBe(201);
+    const [created] = mockCreateFile.mock.calls[0];
+    expect(created.file_id).not.toBe('victim-file');
+  });
+
+  it('strips path separators out of the filename', async () => {
+    mockVerifyFileRef.mockReturnValue(CREATOR);
+    await post({ content: 'x', filename: '../../etc/passwd' });
+    const [created] = mockCreateFile.mock.calls[0];
+    expect(created.filename).not.toMatch(/[/\\]/);
+  });
+
+  it('refuses a missing or empty filename', async () => {
+    mockVerifyFileRef.mockReturnValue(CREATOR);
+    expect((await post({ content: 'x' })).status).toBe(404);
+    expect((await post({ content: 'x', filename: '   ' })).status).toBe(404);
+    expect(mockCreateFile).not.toHaveBeenCalled();
+  });
+
+  it('disables the upload TTL, so a document is not reaped an hour later', async () => {
+    mockVerifyFileRef.mockReturnValue(CREATOR);
+    await post();
+    expect(mockCreateFile.mock.calls[0][1]).toBe(true);
   });
 });

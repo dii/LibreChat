@@ -1,11 +1,12 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const { v4: uuidv4 } = require('uuid');
 const { logger } = require('@librechat/data-schemas');
-const { FileSources } = require('librechat-data-provider');
+const { FileSources, FileContext } = require('librechat-data-provider');
 const { verifyFileRef, FileRefScope } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { getAppConfig } = require('~/server/services/Config');
-const { getFiles, updateFile } = require('~/models');
+const { getFiles, updateFile, createFile } = require('~/models');
 
 /**
  * Serves the bytes of one conversation image to an MCP server that holds a
@@ -206,8 +207,84 @@ const handleMcpFilePut = async (req, res) => {
   }
 };
 
+/**
+ * Create one new file in the conversation a CREATE reference names.
+ *
+ * A create reference is bound to a conversation and carries no file id, which is
+ * what stops it being used to write over something that already exists: there is
+ * no id in the payload to aim at. Ownership comes from the verified principal,
+ * so a created file belongs to the person the reference was minted for and to
+ * nobody else.
+ */
+const handleMcpFilePost = async (req, res) => {
+  const ref = verifyFileRef(req.params.reference, {
+    signingKey: process.env.MCP_FILE_SIGNING_KEY,
+  });
+  if (!ref || ref.scope !== FileRefScope.create || !ref.conversationId) {
+    return notFound(res);
+  }
+
+  const content = req.body?.content;
+  const filename = req.body?.filename;
+  if (typeof content !== 'string' || typeof filename !== 'string' || !filename.trim()) {
+    return notFound(res);
+  }
+
+  try {
+    req.config = await getAppConfig({ tenantId: ref.tenantId });
+
+    const source = req.config?.fileStrategy || FileSources.local;
+    const { saveBuffer } = getStrategyFunctions(source);
+    if (typeof saveBuffer !== 'function') {
+      logger.error(`[/api/mcp/files] storage strategy ${source} cannot write`);
+      return notFound(res);
+    }
+
+    const buffer = Buffer.from(content, 'utf8');
+    const cleanName = filename.trim().replace(/[/\\]/g, '_');
+    const fileId = uuidv4();
+    const filepath = await saveBuffer({
+      userId: ref.userId,
+      buffer,
+      fileName: `${fileId}-${cleanName}`,
+      basePath: 'documents',
+    });
+
+    /* disableTTL: this is a document the user will come back to, not an upload
+       sitting in a composer queue. Left on, the hour-long expiry would delete it
+       out from under them. */
+    const file = await createFile(
+      {
+        file_id: fileId,
+        user: ref.userId,
+        conversationId: ref.conversationId,
+        filename: cleanName,
+        filepath,
+        type: 'text/markdown',
+        bytes: buffer.byteLength,
+        source,
+        context: FileContext.canvas_source,
+        ...(ref.tenantId ? { tenantId: ref.tenantId } : {}),
+      },
+      true,
+    );
+
+    return res.status(201).json({ file_id: file?.file_id ?? fileId, bytes: buffer.byteLength });
+  } catch (error) {
+    logger.error('[/api/mcp/files] failed to create file', error);
+    return notFound(res);
+  }
+};
+
 const router = express.Router();
 router.get('/:reference', mcpFileLimiter, requireMcpFileSecrets, handleMcpFileGet);
+router.post(
+  '/:reference',
+  mcpFileLimiter,
+  requireMcpFileSecrets,
+  express.json({ limit: '10mb' }),
+  handleMcpFilePost,
+);
 router.put(
   '/:reference',
   mcpFileLimiter,

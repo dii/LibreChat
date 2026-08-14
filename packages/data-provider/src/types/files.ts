@@ -31,6 +31,11 @@ export enum FileContext {
   assistants_output = 'assistants_output',
   message_attachment = 'message_attachment',
   skill_file = 'skill_file',
+  /* A document the user is working on in canvas. It is an ordinary File so it
+     lists, files into folders and deletes like everything else - which is the
+     whole point of the canvas rebuild: today's canvas uploads never call
+     createFile, so a user cannot see or delete their own documents. */
+  canvas_source = 'canvas_source',
   filename = 'filename',
   updatedAt = 'updatedAt',
   source = 'source',

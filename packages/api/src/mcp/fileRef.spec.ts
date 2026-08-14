@@ -251,3 +251,46 @@ describe('scopes', () => {
     expect(verifyFileRef(`lcimg_${body}.${mac}`, { signingKey })).toBeNull();
   });
 });
+
+describe('mutating references are shorter-lived', () => {
+  const signingKey = 'test-signing-key-value';
+  const NOW_MS = 1_700_000_000_000;
+
+  const expiryOf = (ref: string): number => {
+    const body = ref.slice(ref.indexOf('_') + 1).split('.')[0];
+    return JSON.parse(Buffer.from(body, 'base64url').toString('utf8')).x;
+  };
+
+  it('a write reference expires sooner than a read one', () => {
+    /* Not symmetry for its own sake: a leaked read reference discloses one file,
+       a leaked write reference destroys it. */
+    const read = mintFileRef({ fileId: 'f1', userId: 'u1' }, { signingKey, now: NOW_MS });
+    const write = mintFileRef(
+      { fileId: 'f1', userId: 'u1', scope: 'w' },
+      { signingKey, now: NOW_MS },
+    );
+    expect(expiryOf(write)).toBeLessThan(expiryOf(read));
+  });
+
+  it('a create reference is short-lived too', () => {
+    const create = mintFileRef(
+      { fileId: '', userId: 'u1', scope: 'c', conversationId: 'c1' },
+      { signingKey, now: NOW_MS },
+    );
+    const read = mintFileRef({ fileId: 'f1', userId: 'u1' }, { signingKey, now: NOW_MS });
+    expect(expiryOf(create)).toBeLessThan(expiryOf(read));
+  });
+
+  it('the read lifetime is unchanged, because a deployed consumer depends on it', () => {
+    const read = mintFileRef({ fileId: 'f1', userId: 'u1' }, { signingKey, now: NOW_MS });
+    expect(expiryOf(read)).toBe(Math.floor((NOW_MS + DEFAULT_FILE_REF_TTL_MS) / 1000));
+  });
+
+  it('an explicit ttlMs still wins for any scope', () => {
+    const write = mintFileRef(
+      { fileId: 'f1', userId: 'u1', scope: 'w' },
+      { signingKey, now: NOW_MS, ttlMs: 60_000 },
+    );
+    expect(expiryOf(write)).toBe(Math.floor((NOW_MS + 60_000) / 1000));
+  });
+});

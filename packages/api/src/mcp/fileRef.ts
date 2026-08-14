@@ -21,6 +21,13 @@ export const FILE_REF_PREFIX: string = 'lcimg_';
  */
 export const ARTEFACT_REF_PREFIX: string = 'lcref_';
 export const DEFAULT_FILE_REF_TTL_MS: number = 30 * 60 * 1000;
+/**
+ * A write or create reference is shorter-lived than a read one, deliberately.
+ * A leaked read reference discloses one file; a leaked write reference destroys
+ * it, and a leaked create reference litters a conversation. The blast radius is
+ * not symmetric, so neither is the lifetime.
+ */
+export const MUTATING_FILE_REF_TTL_MS: number = 5 * 60 * 1000;
 
 /**
  * What a reference grants. Checked before anything else happens, so a read
@@ -100,7 +107,9 @@ export function mintFileRef(payload: FileRefPayload, options: MintFileRefOptions
   }
 
   const now = options.now ?? Date.now();
-  const ttlMs = options.ttlMs ?? DEFAULT_FILE_REF_TTL_MS;
+  const defaultTtl =
+    scope === FileRefScope.read ? DEFAULT_FILE_REF_TTL_MS : MUTATING_FILE_REF_TTL_MS;
+  const ttlMs = options.ttlMs ?? defaultTtl;
   const wire: WirePayload = {
     f: payload.fileId ?? '',
     u: payload.userId,
