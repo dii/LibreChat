@@ -10,17 +10,30 @@ const request = require('supertest');
  * What this file tests is the route's own behaviour: the guards, the scoping of
  * the lookup, and that every refusal looks identical from outside. */
 const mockVerifyFileRef = jest.fn();
+const mockUpdateFile = jest.fn();
+const mockSaveBuffer = jest.fn();
 const mockGetFiles = jest.fn();
 const mockGetDownloadStream = jest.fn();
 const mockGetAppConfig = jest.fn().mockResolvedValue({ paths: { uploads: '/tmp/uploads' } });
 
-jest.mock('@librechat/api', () => ({ verifyFileRef: (...args) => mockVerifyFileRef(...args) }));
+jest.mock('@librechat/api', () => ({
+  verifyFileRef: (...args) => mockVerifyFileRef(...args),
+  /* Mirrors the real vocabulary. A stub that omitted it would make every scope
+     comparison undefined === undefined and quietly pass the route's guard. */
+  FileRefScope: { read: 'r', write: 'w', create: 'c' },
+}));
 jest.mock('@librechat/data-schemas', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), debug: jest.fn(), info: jest.fn() },
 }));
-jest.mock('~/models', () => ({ getFiles: (...args) => mockGetFiles(...args) }));
+jest.mock('~/models', () => ({
+  getFiles: (...args) => mockGetFiles(...args),
+  updateFile: (...args) => mockUpdateFile(...args),
+}));
 jest.mock('~/server/services/Files/strategies', () => ({
-  getStrategyFunctions: () => ({ getDownloadStream: (...args) => mockGetDownloadStream(...args) }),
+  getStrategyFunctions: () => ({
+    getDownloadStream: (...args) => mockGetDownloadStream(...args),
+    saveBuffer: (...args) => mockSaveBuffer(...args),
+  }),
 }));
 /* Stubbed at the boundary, like `@librechat/api` above: requiring the real
  * Config service drags in the violations cache and the whole app-config graph,
@@ -35,7 +48,11 @@ const mcpFiles = require('./mcpFiles');
 
 const TOKEN = 'service-token-for-tests';
 const KEY = 'signing-key-for-tests';
-const PRINCIPAL = { fileId: 'file-1', userId: 'user-a' };
+/* A verified READ reference, which is what the real verifyFileRef returns when
+   the wire payload carries no scope. Scopes were added 2026-08-14; read stayed
+   the default and stayed off the wire, so this is the same reference it always
+   was. */
+const PRINCIPAL = { fileId: 'file-1', userId: 'user-a', scope: 'r' };
 const IMAGE = {
   file_id: 'file-1',
   user: 'user-a',
@@ -235,9 +252,93 @@ describe('GET /api/mcp/files/:reference', () => {
         fileId: IMAGE.file_id,
         userId: IMAGE.user,
         tenantId: 'tenant-a',
+        scope: 'r',
       });
       await get();
       expect(mockGetAppConfig).toHaveBeenCalledWith({ tenantId: 'tenant-a' });
     });
+  });
+});
+
+const put = (body = { content: 'new text' }, token = TOKEN) => {
+  const req = request(buildApp()).put('/api/mcp/files/lcref_body.mac');
+  return (token == null ? req : req.set('Authorization', `Bearer ${token}`)).send(body);
+};
+
+describe('PUT /api/mcp/files/:reference — the write scope', () => {
+  beforeEach(() => {
+    mockSaveBuffer.mockResolvedValue('/uploads/user-a/documents/doc.md');
+  });
+
+  it('refuses a READ reference', async () => {
+    /* The point of the scope. A read reference is handed to an MCP server every
+       turn; if it also wrote, an image tool could overwrite the photo it was
+       asked to look at. */
+    mockVerifyFileRef.mockReturnValue(PRINCIPAL);
+    const res = await put();
+    expect(res.status).toBe(404);
+    expect(mockSaveBuffer).not.toHaveBeenCalled();
+  });
+
+  it('refuses a CREATE reference', async () => {
+    mockVerifyFileRef.mockReturnValue({ userId: 'user-a', scope: 'c', conversationId: 'c1' });
+    const res = await put();
+    expect(res.status).toBe(404);
+    expect(mockSaveBuffer).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unverifiable reference with the same bare 404', async () => {
+    mockVerifyFileRef.mockReturnValue(null);
+    const res = await put();
+    expect(res.status).toBe(404);
+    expect(res.text).toBe('');
+  });
+
+  it('refuses without the bearer token, before the reference is even read', async () => {
+    const res = await put({ content: 'x' }, null);
+    expect(res.status).toBe(401);
+    expect(mockVerifyFileRef).not.toHaveBeenCalled();
+  });
+
+  it('is disabled with 501 when a secret is unset, never open', async () => {
+    delete process.env.MCP_FILE_SIGNING_KEY;
+    mockVerifyFileRef.mockReturnValue({ ...PRINCIPAL, scope: 'w' });
+    expect((await put()).status).toBe(501);
+  });
+
+  it('refuses a body whose content is not a string', async () => {
+    mockVerifyFileRef.mockReturnValue({ ...PRINCIPAL, scope: 'w' });
+    const res = await put({ content: { not: 'a string' } });
+    expect(res.status).toBe(404);
+    expect(mockSaveBuffer).not.toHaveBeenCalled();
+  });
+
+  it('writes through the storage strategy and scopes the lookup to the reference', async () => {
+    mockVerifyFileRef.mockReturnValue({ ...PRINCIPAL, scope: 'w' });
+    const res = await put({ content: 'hello' });
+    expect(res.status).toBe(200);
+    expect(mockGetFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ file_id: 'file-1', user: 'user-a' }),
+      null,
+      expect.anything(),
+    );
+    expect(mockSaveBuffer).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-a' }));
+    expect(res.body.bytes).toBe(Buffer.from('hello', 'utf8').byteLength);
+  });
+
+  it("answers a miss for a file the reference's principal does not own", async () => {
+    mockVerifyFileRef.mockReturnValue({ ...PRINCIPAL, scope: 'w' });
+    mockGetFiles.mockResolvedValue([]);
+    expect((await put()).status).toBe(404);
+    expect(mockSaveBuffer).not.toHaveBeenCalled();
+  });
+
+  it('records the byte length actually stored, not the string length', async () => {
+    /* A multi-byte character makes these differ, and a wrong `bytes` shows the
+       user the wrong size for their own document. */
+    mockVerifyFileRef.mockReturnValue({ ...PRINCIPAL, scope: 'w' });
+    const res = await put({ content: 'héllo' });
+    expect(res.body.bytes).toBe(6);
+    expect(mockUpdateFile).toHaveBeenCalledWith(expect.objectContaining({ bytes: 6 }));
   });
 });

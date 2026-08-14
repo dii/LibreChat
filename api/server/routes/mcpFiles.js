@@ -2,10 +2,10 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { logger } = require('@librechat/data-schemas');
 const { FileSources } = require('librechat-data-provider');
-const { verifyFileRef } = require('@librechat/api');
+const { verifyFileRef, FileRefScope } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { getAppConfig } = require('~/server/services/Config');
-const { getFiles } = require('~/models');
+const { getFiles, updateFile } = require('~/models');
 
 /**
  * Serves the bytes of one conversation image to an MCP server that holds a
@@ -60,6 +60,12 @@ const handleMcpFileGet = async (req, res) => {
     signingKey: process.env.MCP_FILE_SIGNING_KEY,
   });
   if (!ref) {
+    return notFound(res);
+  }
+  /* Least privilege, and deliberately not "write implies read": a scope is
+     checked before anything else happens, and a caller that needs both is given
+     both rather than granted a second capability by implication. */
+  if (ref.scope !== FileRefScope.read) {
     return notFound(res);
   }
 
@@ -137,7 +143,77 @@ const handleMcpFileGet = async (req, res) => {
   }
 };
 
+/**
+ * Replace the content of the file a write reference names.
+ *
+ * Same guard shape as the read route and the same uniform 404, for the same
+ * reason: a distinguishable refusal tells a caller whether a file exists and
+ * whose it is. The principal comes from the verified reference and never from
+ * the caller, and the update is scoped to that principal, so a write reference
+ * for one file cannot be pointed at another.
+ *
+ * Bytes go through the storage strategy rather than being written directly, so
+ * whatever the deployment uses (local, S3, Azure) keeps working, and the file
+ * document's `bytes` is corrected to match what was actually stored.
+ */
+const handleMcpFilePut = async (req, res) => {
+  const ref = verifyFileRef(req.params.reference, {
+    signingKey: process.env.MCP_FILE_SIGNING_KEY,
+  });
+  if (!ref || ref.scope !== FileRefScope.write) {
+    return notFound(res);
+  }
+
+  const content = req.body?.content;
+  if (typeof content !== 'string') {
+    /* Answered as a miss like everything else: a caller holding a valid write
+       reference still learns nothing about the file from a malformed body. */
+    return notFound(res);
+  }
+
+  try {
+    req.config = await getAppConfig({ tenantId: ref.tenantId });
+
+    const filter = { file_id: ref.fileId, user: ref.userId };
+    if (ref.tenantId) {
+      filter.tenantId = ref.tenantId;
+    }
+    const [file] = (await getFiles(filter, null, { text: 0 })) ?? [];
+    if (!file) {
+      return notFound(res);
+    }
+
+    const source = file.source || FileSources.local;
+    const { saveBuffer } = getStrategyFunctions(source);
+    if (typeof saveBuffer !== 'function') {
+      logger.error(`[/api/mcp/files] storage strategy ${source} cannot write`);
+      return notFound(res);
+    }
+
+    const buffer = Buffer.from(content, 'utf8');
+    const filepath = await saveBuffer({
+      userId: ref.userId,
+      buffer,
+      fileName: file.filename,
+      basePath: 'documents',
+    });
+
+    await updateFile({ file_id: ref.fileId, filepath, bytes: buffer.byteLength });
+    return res.status(200).json({ file_id: ref.fileId, bytes: buffer.byteLength });
+  } catch (error) {
+    logger.error('[/api/mcp/files] failed to write file', error);
+    return notFound(res);
+  }
+};
+
 const router = express.Router();
 router.get('/:reference', mcpFileLimiter, requireMcpFileSecrets, handleMcpFileGet);
+router.put(
+  '/:reference',
+  mcpFileLimiter,
+  requireMcpFileSecrets,
+  express.json({ limit: '10mb' }),
+  handleMcpFilePut,
+);
 
 module.exports = router;
