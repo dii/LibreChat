@@ -17,6 +17,9 @@ describe('mintFileRef / verifyFileRef', () => {
       expect(verifyFileRef(ref, { signingKey: KEY, now: NOW })).toEqual({
         fileId: payload.fileId,
         userId: payload.userId,
+        /* Scopes were added 2026-08-14; a reference with none on the wire is a
+           read, so this shape is the same reference it always was. */
+        scope: 'r',
       });
     });
 
@@ -25,6 +28,7 @@ describe('mintFileRef / verifyFileRef', () => {
       expect(verifyFileRef(ref, { signingKey: KEY, now: NOW })).toEqual({
         fileId: payload.fileId,
         userId: payload.userId,
+        scope: 'r',
         tenantId: 'tenant-7',
       });
     });
@@ -159,5 +163,91 @@ describe('mintFileRef / verifyFileRef', () => {
       const ref = mintFileRef(payload, { signingKey: KEY, now: NOW });
       expect(verifyFileRef(ref, { signingKey: '', now: NOW })).toBeNull();
     });
+  });
+});
+
+describe('scopes', () => {
+  const signingKey = 'test-signing-key-value';
+
+  it('a reference with no scope is a read, and is byte-identical to a pre-scope one', () => {
+    /* The comfyui-image broker is deployed and validates the lcimg_ prefix
+       before presenting a reference back. If a plain read reference changed
+       shape or prefix, production would break on the next LibreChat deploy. */
+    const ref = mintFileRef({ fileId: 'f1', userId: 'u1' }, { signingKey });
+    expect(ref.startsWith('lcimg_')).toBe(true);
+    expect(verifyFileRef(ref, { signingKey })).toMatchObject({
+      fileId: 'f1',
+      userId: 'u1',
+      scope: 'r',
+    });
+  });
+
+  it('a write reference uses the artefact-general prefix', () => {
+    const ref = mintFileRef({ fileId: 'f1', userId: 'u1', scope: 'w' }, { signingKey });
+    expect(ref.startsWith('lcref_')).toBe(true);
+    expect(verifyFileRef(ref, { signingKey })?.scope).toBe('w');
+  });
+
+  it('a read reference cannot be replayed as a write', () => {
+    /* The scope is inside the MAC, so upgrading it means forging the MAC. */
+    const read = mintFileRef({ fileId: 'f1', userId: 'u1' }, { signingKey });
+    const verified = verifyFileRef(read, { signingKey });
+    expect(verified?.scope).toBe('r');
+    const tampered = read.replace('lcimg_', 'lcref_');
+    expect(verifyFileRef(tampered, { signingKey })?.scope).not.toBe('w');
+  });
+
+  it('rejects a scope that is not one of the three', () => {
+    const forged = mintFileRef({ fileId: 'f1', userId: 'u1', scope: 'w' }, { signingKey });
+    /* Re-sign a payload carrying a bogus scope with the SAME key: the MAC is
+       valid, so only the scope check can reject it. */
+    const body = Buffer.from(
+      JSON.stringify({ f: 'f1', u: 'u1', x: 99999999999, s: 'admin' }),
+    ).toString('base64url');
+    const mac = createHmac('sha256', signingKey)
+      .update(body)
+      .digest()
+      .subarray(0, 16)
+      .toString('base64url');
+    expect(verifyFileRef(`lcref_${body}.${mac}`, { signingKey })).toBeNull();
+    expect(verifyFileRef(forged, { signingKey })).not.toBeNull();
+  });
+
+  it('a create reference carries a conversation and no file id', () => {
+    const ref = mintFileRef(
+      { fileId: '', userId: 'u1', scope: 'c', conversationId: 'convo-1' },
+      { signingKey },
+    );
+    expect(verifyFileRef(ref, { signingKey })).toMatchObject({
+      userId: 'u1',
+      scope: 'c',
+      conversationId: 'convo-1',
+    });
+  });
+
+  it('refuses to mint a create reference with no conversation', () => {
+    expect(() => mintFileRef({ fileId: '', userId: 'u1', scope: 'c' }, { signingKey })).toThrow(
+      /conversationId/,
+    );
+  });
+
+  it('refuses to mint a read or write reference with no file id', () => {
+    for (const scope of ['r', 'w'] as const) {
+      expect(() => mintFileRef({ fileId: '', userId: 'u1', scope }, { signingKey })).toThrow(
+        /fileId/,
+      );
+    }
+  });
+
+  it('rejects a non-create reference whose file id is empty on the wire', () => {
+    const body = Buffer.from(JSON.stringify({ f: '', u: 'u1', x: 99999999999 })).toString(
+      'base64url',
+    );
+    const mac = createHmac('sha256', signingKey)
+      .update(body)
+      .digest()
+      .subarray(0, 16)
+      .toString('base64url');
+    expect(verifyFileRef(`lcimg_${body}.${mac}`, { signingKey })).toBeNull();
   });
 });

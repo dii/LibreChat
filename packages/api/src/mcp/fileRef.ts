@@ -12,7 +12,27 @@ import { createHmac, timingSafeEqual } from 'crypto';
  */
 
 export const FILE_REF_PREFIX: string = 'lcimg_';
+/**
+ * Artefact-general prefix. `lcimg_` predates it and is still minted for the
+ * conversation-image path, because the comfyui-image broker is DEPLOYED and
+ * validates that exact prefix before presenting a reference back. Verification
+ * accepts either, so the two can coexist and neither repo needs a coordinated
+ * deploy; only new artefact kinds use `lcref_`.
+ */
+export const ARTEFACT_REF_PREFIX: string = 'lcref_';
 export const DEFAULT_FILE_REF_TTL_MS: number = 30 * 60 * 1000;
+
+/**
+ * What a reference grants. Checked before anything else happens, so a read
+ * reference that leaks cannot be replayed as a write.
+ */
+export const FileRefScope = {
+  read: 'r',
+  write: 'w',
+  create: 'c',
+} as const;
+
+export type FileRefScopeValue = (typeof FileRefScope)[keyof typeof FileRefScope];
 
 /** Truncated HMAC-SHA256. 128 bits is far beyond forgery reach here. */
 const MAC_BYTES = 16;
@@ -21,6 +41,10 @@ export interface FileRefPayload {
   fileId: string;
   userId: string;
   tenantId?: string;
+  /** Absent means read: every reference minted before scopes existed is a read. */
+  scope?: FileRefScopeValue;
+  /** Only meaningful for `create`, which has no file id yet. */
+  conversationId?: string;
 }
 
 export interface MintFileRefOptions {
@@ -42,6 +66,10 @@ interface WirePayload {
   t?: string;
   /** Expiry, seconds since epoch. */
   x: number;
+  /** Scope. Absent means read, so old references keep verifying unchanged. */
+  s?: FileRefScopeValue;
+  /** Conversation, for `create` references that name no file yet. */
+  c?: string;
 }
 
 const sign = (body: string, signingKey: string): Buffer =>
@@ -57,23 +85,42 @@ export function mintFileRef(payload: FileRefPayload, options: MintFileRefOptions
   if (!options.signingKey) {
     throw new Error('mintFileRef: signingKey is required');
   }
-  if (!payload?.fileId || !payload?.userId) {
-    throw new Error('mintFileRef: fileId and userId are required');
+  const scope = payload.scope ?? FileRefScope.read;
+  if (!payload?.userId) {
+    throw new Error('mintFileRef: userId is required');
+  }
+  /* A `create` reference names no file yet, by definition; every other scope
+     must name exactly one, or the write route has nothing to act on. */
+  if (scope === FileRefScope.create) {
+    if (!payload.conversationId) {
+      throw new Error('mintFileRef: conversationId is required for a create reference');
+    }
+  } else if (!payload.fileId) {
+    throw new Error('mintFileRef: fileId is required');
   }
 
   const now = options.now ?? Date.now();
   const ttlMs = options.ttlMs ?? DEFAULT_FILE_REF_TTL_MS;
   const wire: WirePayload = {
-    f: payload.fileId,
+    f: payload.fileId ?? '',
     u: payload.userId,
     x: Math.floor((now + ttlMs) / 1000),
   };
   if (payload.tenantId) {
     wire.t = payload.tenantId;
   }
+  /* Read is the default and is left OFF the wire, so a read reference is
+     byte-identical to one minted before scopes existed. */
+  if (scope !== FileRefScope.read) {
+    wire.s = scope;
+  }
+  if (payload.conversationId) {
+    wire.c = payload.conversationId;
+  }
 
+  const prefix = scope === FileRefScope.read ? FILE_REF_PREFIX : ARTEFACT_REF_PREFIX;
   const body = Buffer.from(JSON.stringify(wire)).toString('base64url');
-  return `${FILE_REF_PREFIX}${body}.${sign(body, options.signingKey).toString('base64url')}`;
+  return `${prefix}${body}.${sign(body, options.signingKey).toString('base64url')}`;
 }
 
 /**
@@ -92,11 +139,20 @@ export function verifyFileRef(ref: unknown, options: VerifyFileRefOptions): File
     if (!options?.signingKey) {
       return null;
     }
-    if (typeof ref !== 'string' || !ref.startsWith(FILE_REF_PREFIX)) {
+    if (typeof ref !== 'string') {
+      return null;
+    }
+    /* Either prefix verifies. The prefix is not a security boundary - the MAC
+       is - so accepting both lets the deployed image path keep minting lcimg_
+       while new artefact kinds use lcref_, with no coordinated deploy. */
+    const prefix = [FILE_REF_PREFIX, ARTEFACT_REF_PREFIX].find((candidate) =>
+      ref.startsWith(candidate),
+    );
+    if (prefix == null) {
       return null;
     }
 
-    const parts = ref.slice(FILE_REF_PREFIX.length).split('.');
+    const parts = ref.slice(prefix.length).split('.');
     if (parts.length !== 2) {
       return null;
     }
@@ -116,11 +172,27 @@ export function verifyFileRef(ref: unknown, options: VerifyFileRefOptions): File
     const decoded = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as WirePayload;
     if (
       typeof decoded?.f !== 'string' ||
-      !decoded.f ||
       typeof decoded?.u !== 'string' ||
       !decoded.u ||
       typeof decoded?.x !== 'number'
     ) {
+      return null;
+    }
+    const scope = decoded.s ?? FileRefScope.read;
+    if (
+      scope !== FileRefScope.read &&
+      scope !== FileRefScope.write &&
+      scope !== FileRefScope.create
+    ) {
+      return null;
+    }
+    /* A create reference names no file; anything else must name one. An empty
+       file id on a read or write would otherwise reach a lookup as a blank key. */
+    if (scope === FileRefScope.create) {
+      if (typeof decoded.c !== 'string' || !decoded.c) {
+        return null;
+      }
+    } else if (!decoded.f) {
       return null;
     }
 
@@ -129,7 +201,10 @@ export function verifyFileRef(ref: unknown, options: VerifyFileRefOptions): File
       return null;
     }
 
-    const result: FileRefPayload = { fileId: decoded.f, userId: decoded.u };
+    const result: FileRefPayload = { fileId: decoded.f, userId: decoded.u, scope };
+    if (typeof decoded.c === 'string' && decoded.c) {
+      result.conversationId = decoded.c;
+    }
     if (typeof decoded.t === 'string' && decoded.t) {
       result.tenantId = decoded.t;
     }
