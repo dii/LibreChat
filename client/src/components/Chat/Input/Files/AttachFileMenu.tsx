@@ -44,6 +44,7 @@ import { useSharePointFileHandlingNoChatContext } from '~/hooks/Files/useSharePo
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
 import { useGetStartupConfig, useUploadCanvasSourceMutation } from '~/data-provider';
 import { SharePointPickerDialog } from '~/components/SharePoint';
+import AttachExistingDialog from './AttachExistingDialog';
 import { useOptionalChatFormContext } from '~/Providers';
 import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
@@ -141,6 +142,7 @@ const AttachFileMenu = ({
   const sharePointEnabled = startupConfig?.sharePointFilePickerEnabled;
 
   const [isSharePointDialogOpen, setIsSharePointDialogOpen] = useState(false);
+  const [isAttachExistingOpen, setIsAttachExistingOpen] = useState(false);
 
   /** TODO: Ephemeral Agent Capabilities
    * Allow defining agent capabilities on a per-endpoint basis
@@ -357,6 +359,12 @@ const AttachFileMenu = ({
     const localItems = createMenuItems(handleUploadClick);
 
     localItems.push({
+      label: localize('com_files_attach_existing'),
+      onClick: () => setIsAttachExistingOpen(true),
+      icon: <FileInput className="icon-md" />,
+    });
+
+    localItems.push({
       label: localize('com_ui_add_to_canvas'),
       onClick: () => canvasInputRef.current?.click(),
       icon: <FileInput className="icon-md" />,
@@ -390,6 +398,7 @@ const AttachFileMenu = ({
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
     setIsSharePointDialogOpen,
+    setIsAttachExistingOpen,
   ]);
 
   const menuTrigger = (
@@ -454,6 +463,17 @@ const AttachFileMenu = ({
         data-testid="canvas-source-input"
         onChange={handleCanvasFileChange}
       />
+      {/* Mounted only when open. The dialog runs two queries, and the attach
+          menu renders on every conversation, so mounting it closed would cost a
+          folder and file fetch per chat for a dialog nobody opened. */}
+      {isAttachExistingOpen && (
+        <AttachExistingDialog
+          isOpen={isAttachExistingOpen}
+          onClose={() => setIsAttachExistingOpen(false)}
+          setFiles={setFiles}
+          toolResource={toolResourceRef.current}
+        />
+      )}
       <SharePointPickerDialog
         isOpen={isSharePointDialogOpen}
         onOpenChange={setIsSharePointDialogOpen}
