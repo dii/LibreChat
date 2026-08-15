@@ -170,7 +170,12 @@ cmd_lint() {
   bold "== lint =="
   local targets="${*:-}"
   if [[ -z "$targets" ]]; then
-    targets=$(cd "$REPO" && git diff --name-only HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' | tr '\n' ' ')
+    # --diff-filter=d drops DELETED paths. Without it eslint is handed a file
+    # that no longer exists and exits 1 with "No files matching the pattern",
+    # which reads exactly like a lint failure — hit on 2026-08-15 when the canvas
+    # git store was removed and lint "failed" on a file whose deletion was the
+    # entire point of the change.
+    targets=$(cd "$REPO" && git diff --name-only --diff-filter=d HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' | tr '\n' ' ')
     [[ -z "$targets" ]] && { echo "   no changed lintable files"; return 0; }
     echo "   changed files: ${targets}"
   fi

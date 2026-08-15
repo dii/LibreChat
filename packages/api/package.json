@@ -161,7 +161,6 @@
   },
   "dependencies": {
     "@langchain/langgraph-checkpoint": "^1.1.2",
-    "@langchain/langgraph-checkpoint-mongodb": "^1.4.0",
-    "isomorphic-git": "^1.38.7"
+    "@langchain/langgraph-checkpoint-mongodb": "^1.4.0"
   }
 }

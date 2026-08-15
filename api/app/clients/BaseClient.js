@@ -20,6 +20,7 @@ const {
   getLangfuseTraceDestinationIds,
   resolveArtifactEditsInContentWithDocs,
 } = require('@librechat/api');
+const { applyCanvasDocEdit } = require('~/server/services/Files/canvasDocEdit');
 const {
   Constants,
   FileSources,
@@ -558,12 +559,17 @@ class BaseClient {
    * @returns {{ baseDir: string, userId: string } | undefined}
    */
   getCanvasDocsContext() {
-    const baseDir = process.env.CANVAS_SOURCES_DIR;
+    /* No longer gated on CANVAS_SOURCES_DIR: a directive now edits the user's
+       own file record rather than a bind-mounted git tree, so the capability
+       exists wherever a user does. The env var and the mount it named were
+       removed on 2026-08-15 with the store. */
     const userId = this.options?.req?.user?.id ?? this.user;
-    if (!baseDir || typeof userId !== 'string') {
+    if (typeof userId !== 'string') {
       return undefined;
     }
-    return { baseDir, userId };
+    return {
+      applyEdit: (identifier, blocks) => applyCanvasDocEdit({ userId, identifier, blocks }),
+    };
   }
 
   async sendMessage(message, opts = {}) {

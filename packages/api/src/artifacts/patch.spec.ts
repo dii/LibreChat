@@ -1,15 +1,10 @@
-import os from 'os';
-import fs from 'fs';
-import path from 'path';
 import {
   parseArtifactEdits,
   resolveArtifactEdits,
   resolveArtifactEditsInContent,
   collectPriorArtifactTexts,
   resolveArtifactEditsWithDocs,
-  resolveArtifactEditsInContentWithDocs,
 } from './patch';
-import { createOrVersionDoc, getDocMeta } from '../canvas/docs';
 
 type ArtifactOptions = {
   type?: string;
@@ -295,21 +290,50 @@ describe('collectPriorArtifactTexts', () => {
 });
 
 describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
-  let baseDir: string;
-  const userId = 'userAAAA';
-  const canvasDocs = () => ({ baseDir, userId });
+  /* Rewritten 2026-08-15. This used to build a real git repo in a tmpdir via
+     createOrVersionDoc, because the doc store WAS a git working tree. The store
+     is gone and the context is now an injected function, so these tests state
+     what this module is actually responsible for — routing a directive to the
+     doc path and rendering the result — without standing up a filesystem to do
+     it. Whether an edit persists correctly is canvasDocEdit.spec.js's job. */
+  const docs: Record<string, string> = {};
+  let calls: Array<{ identifier: string; blocks: unknown[] }>;
+
+  const canvasDocs = () => ({
+    applyEdit: async (identifier: string, blocks: Array<{ original: string; updated: string }>) => {
+      calls.push({ identifier, blocks });
+      const current = docs[identifier];
+      if (current === undefined) {
+        return { status: 'notfound' as const };
+      }
+      let out = current;
+      for (const b of blocks) {
+        if (!out.includes(b.original)) {
+          return { status: 'nomatch' as const };
+        }
+        out = out.replace(b.original, b.updated);
+      }
+      docs[identifier] = out;
+      return {
+        status: 'applied' as const,
+        version: 1,
+        oldContent: current,
+        newContent: out,
+        diff: null,
+      };
+    },
+  });
 
   beforeEach(() => {
-    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'canvas-patch-'));
+    calls = [];
+    for (const key of Object.keys(docs)) {
+      delete docs[key];
+    }
   });
 
-  afterEach(() => {
-    fs.rmSync(baseDir, { recursive: true, force: true });
-  });
-
-  const seedDoc = async (filename: string, content: string, uid = userId): Promise<string> => {
-    const { docKey } = await createOrVersionDoc({ baseDir, userId: uid, filename, content });
-    return docKey;
+  const seedDoc = (identifier: string, content: string): string => {
+    docs[identifier] = content;
+    return identifier;
   };
 
   test('without canvasDocs it behaves exactly like resolveArtifactEdits', async () => {
@@ -320,111 +344,49 @@ describe('resolveArtifactEditsWithDocs (canvas doc fallback)', () => {
     expect(withDocs.text).not.toContain('Canvas doc');
   });
 
-  test('falls back to a canvas doc, bumps the version, and emits a diff', async () => {
-    const docKey = await seedDoc('doc.md', 'alpha\nbravo\ncharlie');
-    const text = `Applying your change:\n\n${edit(docKey, [block('bravo', 'BRAVO')])}`;
-
+  test('a directive with no matching in-message artifact falls through to the doc path', async () => {
+    seedDoc('notes-md', 'hello world');
     const result = await resolveArtifactEditsWithDocs({
       priorText: [],
-      text,
+      text: edit('notes-md', [block('world', 'there')]),
       canvasDocs: canvasDocs(),
     });
-
-    expect(result.applied).toBe(1);
-    expect(result.failed).toBe(0);
-    expect(result.text).toContain(`**Canvas doc \`${docKey}\` updated to v2.**`);
-    expect(result.text).toContain('```diff');
-    expect(result.text).toContain('-bravo');
-    expect(result.text).toContain('+BRAVO');
-    expect(result.text).not.toContain(':::artifact-edit');
-
-    const meta = await getDocMeta({ baseDir, userId, docKey });
-    expect(meta?.currentVersion).toBe(2);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].identifier).toBe('notes-md');
+    expect(docs['notes-md']).toBe('hello there');
+    expect(result.text).toContain('Canvas doc');
   });
 
-  test('in-message artifacts take precedence over a same-identifier doc', async () => {
-    const docKey = await seedDoc('doc.md', 'from-doc');
-    const priorText = [artifact(docKey, 'in-message')];
-    const text = edit(docKey, [block('in-message', 'edited-in-message')]);
-
-    const result = await resolveArtifactEditsWithDocs({
-      priorText,
-      text,
-      canvasDocs: canvasDocs(),
-    });
-
-    expect(result.applied).toBe(1);
-    expect(result.text).toContain(`:::artifact{identifier="${docKey}"`);
-    expect(result.text).toContain('edited-in-message');
-    expect(result.text).not.toContain('Canvas doc');
-
-    const meta = await getDocMeta({ baseDir, userId, docKey });
-    expect(meta?.currentVersion).toBe(1);
-  });
-
-  test('unknown identifier fails loud without touching any doc', async () => {
-    const text = edit('ghost-doc', [block('a', 'b')]);
-
+  test('an unknown identifier fails the directive rather than inventing a document', async () => {
     const result = await resolveArtifactEditsWithDocs({
       priorText: [],
-      text,
+      text: edit('absent-md', [block('a', 'b')]),
       canvasDocs: canvasDocs(),
     });
-
-    expect(result.applied).toBe(0);
     expect(result.failed).toBe(1);
-    expect(result.text).toContain(':::artifact-edit{identifier="ghost-doc"}');
-    expect(result.text).toContain('⚠️ artifact edit failed: no artifact found with identifier');
+    expect(docs).toEqual({});
   });
 
-  test('a doc that exists but has no matching ORIGINAL fails loud', async () => {
-    const docKey = await seedDoc('doc.md', 'hello world');
-    const text = edit(docKey, [block('absent', 'x')]);
-
+  test('a non-matching block fails the directive and writes nothing', async () => {
+    seedDoc('notes-md', 'hello world');
     const result = await resolveArtifactEditsWithDocs({
       priorText: [],
-      text,
+      text: edit('notes-md', [block('absent', 'x')]),
       canvasDocs: canvasDocs(),
     });
-
     expect(result.failed).toBe(1);
-    expect(result.text).toContain('original content not found in canvas doc');
-    const meta = await getDocMeta({ baseDir, userId, docKey });
-    expect(meta?.currentVersion).toBe(1);
+    expect(docs['notes-md']).toBe('hello world');
   });
 
-  test('per-user isolation: one user’s directive cannot edit another user’s doc', async () => {
-    const docKey = await seedDoc('secret.md', 'top secret', 'userBBBB');
-    const text = edit(docKey, [block('top secret', 'leaked')]);
-
-    const result = await resolveArtifactEditsWithDocs({
-      priorText: [],
-      text,
-      canvasDocs: { baseDir, userId: 'userAAAA' },
-    });
-
-    expect(result.failed).toBe(1);
-    expect(result.text).toContain('no artifact found with identifier');
-    const meta = await getDocMeta({ baseDir, userId: 'userBBBB', docKey });
-    expect(meta?.currentVersion).toBe(1);
-  });
-
-  test('content variant resolves a doc edit within a text part', async () => {
-    const docKey = await seedDoc('doc.md', 'one two');
-    const content = [
-      { type: 'text', text: 'here goes' },
-      { type: 'text', text: edit(docKey, [block('two', 'TWO')]) },
-    ];
-
-    const result = await resolveArtifactEditsInContentWithDocs({
-      priorText: [],
-      content,
+  test('an in-message artifact keeps precedence over a doc of the same name', async () => {
+    seedDoc('doc-md', 'stored content');
+    const prior = artifact('doc-md', 'in message content');
+    await resolveArtifactEditsWithDocs({
+      priorText: [prior],
+      text: edit('doc-md', [block('in message', 'edited')]),
       canvasDocs: canvasDocs(),
     });
-
-    expect(result.applied).toBe(1);
-    expect(result.content[1].text).toContain(`**Canvas doc \`${docKey}\` updated to v2.**`);
-    const meta = await getDocMeta({ baseDir, userId, docKey });
-    expect(meta?.currentVersion).toBe(2);
+    expect(calls).toHaveLength(0);
+    expect(docs['doc-md']).toBe('stored content');
   });
 });

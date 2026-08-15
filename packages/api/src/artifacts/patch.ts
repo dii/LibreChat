@@ -1,6 +1,4 @@
 import { ARTIFACT_START, ARTIFACT_END, findAllArtifacts, replaceArtifactContent } from './update';
-import { applyDocEdit } from '../canvas/docs';
-import type { CanvasDocEditResult } from '../canvas/docs';
 
 export const ARTIFACT_EDIT_START = ':::artifact-edit';
 const ORIGINAL_MARKER = '<<<<<<< ORIGINAL';
@@ -305,9 +303,33 @@ export const resolveArtifactEditsInContent = ({
   return { content: nextContent, applied, failed };
 };
 
+/**
+ * How a directive reaches the stored document.
+ *
+ * This used to be `{ baseDir, userId }` — a path into a git working tree that
+ * this package opened itself. It is now an injected function, because the store
+ * moved to LibreChat's own file records and packages/api cannot (and should not)
+ * reach the models layer. The caller supplies the implementation; this module
+ * keeps only the contract and the branching on its result.
+ */
+/**
+ * What an applied edit reports back. Defined here now that the git-backed
+ * `canvas/docs` module is gone; the shape is unchanged because BaseClient
+ * branches on it.
+ */
+export type CanvasDocEditResult =
+  | {
+      status: 'applied';
+      version: number;
+      oldContent: string;
+      newContent: string;
+      diff: string | null;
+    }
+  | { status: 'notfound' }
+  | { status: 'nomatch' };
+
 export type CanvasDocsContext = {
-  baseDir: string;
-  userId: string;
+  applyEdit: (identifier: string, blocks: MarkerBlock[]) => Promise<CanvasDocEditResult>;
 };
 
 const toDiffLines = (value: string, marker: '-' | '+'): string =>
@@ -332,19 +354,14 @@ const resolveDocEdit = (
   if (!identifier) {
     return Promise.resolve({ status: 'notfound' });
   }
-  return applyDocEdit({
-    baseDir: canvasDocs.baseDir,
-    userId: canvasDocs.userId,
-    docKey: identifier,
-    blocks,
-  });
+  return canvasDocs.applyEdit(identifier, blocks);
 };
 
 /**
  * Doc-aware variant of {@link resolveArtifactEdits}. In-message artifacts keep
  * precedence; only when no prior artifact matches a directive's identifier does
  * it fall back to the requesting user's server-stored canvas docs (never in
- * context). A doc hit is applied via `applyDocEdit` and the directive is
+ * context). A doc hit is applied via the injected `applyEdit` and the directive is
  * replaced with a confirmation plus a fenced diff; misses fail loud in place.
  * With no `canvasDocs` it is exactly {@link resolveArtifactEdits}.
  */

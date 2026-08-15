@@ -2,7 +2,6 @@ const path = require('path');
 const multer = require('multer');
 const express = require('express');
 const { logger } = require('@librechat/data-schemas');
-const { createOrVersionDoc, slugifyDocKey } = require('@librechat/api');
 const { FileSources, FileContext } = require('librechat-data-provider');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { v4: uuidv4 } = require('uuid');
@@ -62,8 +61,11 @@ const handleCanvasSourceUpload = async (req, res) => {
     return res.status(400).json({ error: 'invalid user' });
   }
 
+  /* The second half of this test used to be `!slugifyDocKey(filename)` — whether
+     the name could produce a valid git doc key. Doc keys went with the store on
+     2026-08-15; sanitizeCanvasFilename is the whole check now. */
   const filename = sanitizeCanvasFilename(req.file.originalname);
-  if (!filename || !slugifyDocKey(filename)) {
+  if (!filename) {
     return res.status(400).json({ error: 'invalid filename' });
   }
 
@@ -95,27 +97,13 @@ const handleCanvasSourceUpload = async (req, res) => {
       true,
     );
 
-    let docKey = null;
-    let version = null;
-    let created = null;
-    if (process.env.CANVAS_SOURCES_DIR) {
-      try {
-        ({ docKey, version, created } = await createOrVersionDoc({
-          baseDir: process.env.CANVAS_SOURCES_DIR,
-          userId,
-          filename,
-          content: req.file.buffer,
-        }));
-      } catch (error) {
-        /* Not fatal. The File document above is the record of the user's
-           document; the git store is a shadow copy being retired. */
-        logger.warn('[/files/canvas-source] git-backed shadow copy failed', error);
-      }
-    }
+    /* The git shadow copy was removed on 2026-08-15 with the store itself.
+       createOrVersionDoc wrote a second copy of every upload into a bind-mounted
+       working tree so the canvas MCP server could find it by path; that server
+       now fetches the File document by signed reference, so the shadow copy has
+       no reader. The File document created above was always the record. */
 
-    return res
-      .status(200)
-      .json({ filename, bytes: req.file.size, file_id: fileId, docKey, version, created });
+    return res.status(200).json({ filename, bytes: req.file.size, file_id: fileId });
   } catch (error) {
     logger.error('[/files/canvas-source] Failed to create canvas doc', error);
     return res.status(500).json({ error: 'failed to write canvas source' });
