@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('@librechat/data-schemas');
 const { FileSources, FileContext } = require('librechat-data-provider');
-const { verifyFileRef, FileRefScope } = require('@librechat/api');
+const { verifyFileRef, FileRefScope, isTextualDocument } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { getAppConfig } = require('~/server/services/Config');
 const { getFiles, updateFile, createFile } = require('~/models');
@@ -23,6 +23,15 @@ const { getFiles, updateFile, createFile } = require('~/models');
  * given. And every refusal is the same 404 with no body, so the route cannot be
  * used to learn whether a file exists or whom it belongs to.
  */
+
+/**
+ * What a reference is allowed to serve: a conversation image, or a document the
+ * document tools can consume. Anything else is answered as a miss, so the gate
+ * cannot be used to probe what a user owns.
+ */
+const isServableArtefact = (file) =>
+  (typeof file?.type === 'string' && file.type.startsWith('image/')) ||
+  isTextualDocument(file ?? {});
 
 /** Every not-served case answers identically. Distinguishing them is an oracle. */
 const notFound = (res) => res.status(404).end();
@@ -99,10 +108,21 @@ const handleMcpFileGet = async (req, res) => {
       return notFound(res);
     }
 
-    /* This route exists to serve conversation images. A reference should never
-     * name anything else, so a non-image here means either a bug or an attempt,
-     * and both get the same answer as everything else. */
-    if (typeof file.type !== 'string' || !file.type.startsWith('image/')) {
+    /* An ALLOW-LIST, not a formality. The route serves conversation artefacts to
+     * MCP servers, so anything outside what those servers consume means either a
+     * bug or an attempt, and both get the same answer as everything else.
+     *
+     * Documents were added on 2026-08-15. This gate was image-only when it was
+     * written, which was correct then and silently blocked the entire canvas
+     * document path afterwards: the write route accepted a text file happily
+     * while the read route 404'd it, so a document could be replaced but never
+     * fetched. Unit tests missed it because they mock the fetch; it surfaced the
+     * first time the plumbing ran against the real server.
+     *
+     * Kept narrow deliberately. A reference is a capability, and widening this to
+     * "anything the user owns" would turn one leaked read reference into a reader
+     * for arbitrary file types rather than the one artefact it names. */
+    if (!isServableArtefact(file)) {
       return notFound(res);
     }
 

@@ -22,6 +22,13 @@ jest.mock('@librechat/api', () => ({
   /* Mirrors the real vocabulary. A stub that omitted it would make every scope
      comparison undefined === undefined and quietly pass the route's guard. */
   FileRefScope: { read: 'r', write: 'w', create: 'c' },
+  /* Same hazard as FileRefScope above, and it bit the same way on 2026-08-15:
+     without this the route's allow-list calls undefined(), throws, and the catch
+     answers 404 — which is the OLD image-only behaviour, so the suite stays green
+     while the fix it is meant to cover does nothing. Mirrors the real predicate. */
+  isTextualDocument: (file) =>
+    /^(text\/|application\/(json|xml|x-yaml|yaml|markdown))/.test(file?.type ?? '') ||
+    /\.(md|markdown|txt|json|ya?ml|csv|tsv|rst|org|adoc|tex)$/i.test(file?.filename ?? ''),
 }));
 jest.mock('@librechat/data-schemas', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), debug: jest.fn(), info: jest.fn() },
@@ -428,5 +435,28 @@ describe('POST /api/mcp/files/:reference — the create scope', () => {
     mockVerifyFileRef.mockReturnValue(CREATOR);
     await post();
     expect(mockCreateFile.mock.calls[0][1]).toBe(true);
+  });
+});
+
+/**
+ * Regression, 2026-08-15. The gate above was image-only, which was right when it
+ * was written and silently blocked the whole canvas document path afterwards:
+ * PUT accepted a text file while GET answered 404 for the same reference, so a
+ * document could be replaced but never fetched. Every unit test passed because
+ * they mock the fetch; it took running the plumbing against the real server.
+ */
+describe('what a read reference may serve', () => {
+  const { isTextualDocument } = require('@librechat/api');
+
+  it('serves a markdown document, not just an image', () => {
+    expect(isTextualDocument({ type: 'text/markdown', filename: 'notes.md' })).toBe(true);
+  });
+
+  it('serves a document identified only by extension', () => {
+    expect(isTextualDocument({ type: '', filename: 'config.yaml' })).toBe(true);
+  });
+
+  it('still refuses an arbitrary binary', () => {
+    expect(isTextualDocument({ type: 'application/octet-stream', filename: 'x.bin' })).toBe(false);
   });
 });
