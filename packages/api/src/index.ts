@@ -25,6 +25,8 @@ export * from './mcp/fileRef';
 export * from './mcp/conversationImages';
 export * from './mcp/conversationImageContext';
 export * from './mcp/resolveImageContext';
+export * from './mcp/conversationDocumentContext';
+export * from './mcp/resolveDocumentContext';
 export * from './mcp/request';
 /* Utilities */
 export * from './mcp/utils';

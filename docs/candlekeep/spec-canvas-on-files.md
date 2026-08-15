@@ -130,6 +130,23 @@ treated as such:
 - The write route replaces content under an existing `file_id` owned by the reference's principal.
   It never creates, never changes ownership, and never touches a file the principal does not own.
 
+**One tool call needs both capabilities, and it gets two references, not a combined one.**
+The spec did not say this and had to decide it during the build (2026-08-15). A canvas edit
+fetches the document and replaces it, so the server needs read AND write on the same file, while
+the model passes tokens the tool signature names. Three options were weighed: a combined `rw`
+scope, making `write` imply `read`, or offering a labelled pair.
+
+The pair wins on one property the others lack: **a mix-up fails closed.** Both references look
+alike to a blind model, so it will sometimes swap them - and when it does, each route rejects on
+scope before touching a file, which is the same refusal a forged reference gets. A combined scope
+has no such check, and "write implies read" was already rejected on 2026-08-14 for granting a
+capability by implication. The pair also means a read-only operation (summarise, extract) carries
+no destroy capability at all, which a combined scope cannot express.
+
+The cost is honest: two similar tokens per document in the context block, and a model that must
+keep them straight. That cost buys a failure mode that is a 404 rather than a wrong write, which
+matters more here because §6 removes versions.
+
 **Versions are not a safety net here**, because §6 removes them. That raises the cost of a bad
 write, which is an argument for the shorter lifetime above and for the model being unable to write
 without a reference LibreChat minted this turn.
