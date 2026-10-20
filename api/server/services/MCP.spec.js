@@ -1970,6 +1970,67 @@ describe('User parameter passing tests', () => {
       );
     });
 
+    describe('OBO resolver injected into MCPManager.callTool (RFC 8693 R1)', () => {
+      const ORIGINAL_AUDIENCE = process.env.OPENID_MCP_EXCHANGE_AUDIENCE;
+
+      afterEach(() => {
+        if (ORIGINAL_AUDIENCE === undefined) {
+          delete process.env.OPENID_MCP_EXCHANGE_AUDIENCE;
+        } else {
+          process.env.OPENID_MCP_EXCHANGE_AUDIENCE = ORIGINAL_AUDIENCE;
+        }
+      });
+
+      const invokeAndCaptureResolver = async () => {
+        const mockUser = { id: 'obo-user', email: 'obo@example.com', role: 'USER' };
+        const { getRoleByName } = require('~/models');
+        getRoleByName.mockResolvedValue({
+          permissions: { [PermissionTypes.MCP_SERVERS]: { [Permissions.USE]: true } },
+        });
+        const mockCallTool = jest.fn().mockResolvedValue(['ok', null]);
+        mockGetMCPManager.mockReturnValue({ callTool: mockCallTool });
+
+        const mcpTool = await createMCPTool({
+          res: { write: jest.fn(), flush: jest.fn() },
+          user: mockUser,
+          toolKey: `test-tool${D}test-server`,
+          provider: 'openai',
+          userMCPAuthMap: {},
+          availableTools: {
+            [`test-tool${D}test-server`]: {
+              function: {
+                description: 'Cached tool',
+                parameters: { type: 'object', properties: {} },
+              },
+            },
+          },
+        });
+
+        await mcpTool.invoke(
+          {},
+          {
+            configurable: { user_id: mockUser.id },
+            metadata: { provider: 'openai', thread_id: 'thread-1', run_id: 'run-1' },
+            toolCall: {},
+          },
+        );
+        expect(mockCallTool).toHaveBeenCalledTimes(1);
+        return mockCallTool.mock.calls[0][0].oboTokenResolver;
+      };
+
+      it('passes exchangeOboToken itself when OPENID_MCP_EXCHANGE_AUDIENCE is unset', async () => {
+        delete process.env.OPENID_MCP_EXCHANGE_AUDIENCE;
+        const { exchangeOboToken } = require('./OboTokenService');
+        expect(await invokeAndCaptureResolver()).toBe(exchangeOboToken);
+      });
+
+      it('passes the RFC 8693 resolver when OPENID_MCP_EXCHANGE_AUDIENCE is set', async () => {
+        process.env.OPENID_MCP_EXCHANGE_AUDIENCE = 'mcp-librechat-client-id';
+        const { exchangeTokenRfc8693 } = require('./TokenExchangeService');
+        expect(await invokeAndCaptureResolver()).toBe(exchangeTokenRfc8693);
+      });
+    });
+
     it('should pass captured request body when invocation config omits requestBody', async () => {
       const mockUser = { id: 'captured-body-user', email: 'captured@example.com', role: 'USER' };
       const requestBody = { conversationId: 'conv-123', messageId: 'msg-123' };

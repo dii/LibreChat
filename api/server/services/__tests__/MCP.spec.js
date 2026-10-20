@@ -60,6 +60,9 @@ jest.mock('~/server/services/GraphTokenService', () => ({
 jest.mock('~/server/services/OboTokenService', () => ({
   exchangeOboToken: jest.fn(),
 }));
+jest.mock('~/server/services/TokenExchangeService', () => ({
+  getMcpOboTokenResolver: jest.fn(() => jest.fn()),
+}));
 jest.mock('~/server/services/OboPolicyService', () => ({
   createOboTrustChecker: jest.fn(() => async () => true),
 }));

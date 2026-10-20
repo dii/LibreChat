@@ -167,6 +167,50 @@ describe('reinitMCPServer — customUserVars gating (issue #10969)', () => {
     );
   });
 
+  describe('OBO resolver injected at both connection call sites (RFC 8693 R1)', () => {
+    const ORIGINAL_AUDIENCE = process.env.OPENID_MCP_EXCHANGE_AUDIENCE;
+    const plainConfig = { type: 'streamable-http', url: 'https://thingy.example.com/mcp' };
+
+    afterEach(() => {
+      if (ORIGINAL_AUDIENCE === undefined) {
+        delete process.env.OPENID_MCP_EXCHANGE_AUDIENCE;
+      } else {
+        process.env.OPENID_MCP_EXCHANGE_AUDIENCE = ORIGINAL_AUDIENCE;
+      }
+    });
+
+    const captureResolvers = async () => {
+      mockGetConnection.mockRejectedValue(new Error('OAuth authentication required'));
+      mockDiscoverServerTools.mockResolvedValue({ tools: [], oauthRequired: true, oauthUrl: null });
+      await reinitMCPServer({
+        user,
+        serverName,
+        serverConfig: plainConfig,
+        userMCPAuthMap: undefined,
+      });
+      return {
+        connection: mockGetConnection.mock.calls[0][0].oboTokenResolver,
+        discovery: mockDiscoverServerTools.mock.calls[0][0].oboTokenResolver,
+      };
+    };
+
+    it('passes exchangeOboToken itself when OPENID_MCP_EXCHANGE_AUDIENCE is unset', async () => {
+      delete process.env.OPENID_MCP_EXCHANGE_AUDIENCE;
+      const { exchangeOboToken } = require('~/server/services/OboTokenService');
+      const resolvers = await captureResolvers();
+      expect(resolvers.connection).toBe(exchangeOboToken);
+      expect(resolvers.discovery).toBe(exchangeOboToken);
+    });
+
+    it('passes the RFC 8693 resolver when OPENID_MCP_EXCHANGE_AUDIENCE is set', async () => {
+      process.env.OPENID_MCP_EXCHANGE_AUDIENCE = 'mcp-librechat-client-id';
+      const { exchangeTokenRfc8693 } = require('~/server/services/TokenExchangeService');
+      const resolvers = await captureResolvers();
+      expect(resolvers.connection).toBe(exchangeTokenRfc8693);
+      expect(resolvers.discovery).toBe(exchangeTokenRfc8693);
+    });
+  });
+
   it('disconnects ephemeral BODY-scoped connections after loading tools', async () => {
     const disconnect = jest.fn().mockResolvedValue(undefined);
     const tools = [{ name: 'search', inputSchema: { type: 'object', properties: {} } }];

@@ -8,7 +8,7 @@ const { CacheKeys, Constants } = require('librechat-data-provider');
 const { getMCPManager, getMCPServersRegistry, getFlowStateManager } = require('~/config');
 const { findToken, createToken, updateToken, deleteTokens } = require('~/models');
 const { getGraphApiToken } = require('~/server/services/GraphTokenService');
-const { exchangeOboToken } = require('~/server/services/OboTokenService');
+const { getMcpOboTokenResolver } = require('~/server/services/TokenExchangeService');
 const { createOboTrustChecker } = require('~/server/services/OboPolicyService');
 const { updateMCPServerTools } = require('~/server/services/Config');
 const { getLogStores } = require('~/cache');
@@ -198,7 +198,7 @@ async function reinitMCPServer({
         connectionTimeout,
         serverConfig,
         graphTokenResolver: getGraphApiToken,
-        oboTokenResolver: exchangeOboToken,
+        oboTokenResolver: getMcpOboTokenResolver(),
         oboTrustChecker: createOboTrustChecker(),
       });
 
@@ -235,7 +235,7 @@ async function reinitMCPServer({
             connectionTimeout,
             configServers,
             graphTokenResolver: getGraphApiToken,
-            oboTokenResolver: exchangeOboToken,
+            oboTokenResolver: getMcpOboTokenResolver(),
             oboTrustChecker: createOboTrustChecker(),
           });
 
