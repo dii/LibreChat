@@ -70,8 +70,11 @@ describe('TokenExchangeService (RFC 8693)', () => {
     getLogStores.mockReturnValue(store);
 
     openIdConfig = { client_id: 'librechat-client-id', issuer: 'https://idp.example/app/' };
+    getOpenIdConfig.mockReset();
     getOpenIdConfig.mockReturnValue(openIdConfig);
 
+    /** mockReset drops queued *Once values, so a test that leaves one unused cannot leak it. */
+    client.genericGrantRequest.mockReset();
     client.genericGrantRequest.mockResolvedValue({
       access_token: 'exchanged-token',
       token_type: 'bearer',
@@ -413,13 +416,23 @@ describe('TokenExchangeService (RFC 8693)', () => {
   });
 
   describe('R8 coalescing', () => {
+    /** Deferred grants still pending when a test ends; settled afterwards so a failed
+     *  assertion cannot leave a promise holding the module's in-flight slot. */
+    let pendingGrants = [];
+    const deferredGrant = () =>
+      new Promise((resolve) => {
+        pendingGrants.push(resolve);
+      });
+
+    afterEach(async () => {
+      pendingGrants.forEach((resolve) => resolve({ access_token: 'settled', expires_in: 600 }));
+      pendingGrants = [];
+      await flushMicrotasks();
+    });
+
     it('coalesces concurrent exchanges for the same key into one IdP call', async () => {
-      let resolveGrant;
-      client.genericGrantRequest.mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveGrant = resolve;
-        }),
-      );
+      client.genericGrantRequest.mockReturnValueOnce(deferredGrant());
+      const resolveGrant = pendingGrants[pendingGrants.length - 1];
 
       const callA = exchangeTokenRfc8693(user, 'user-access-token', 'openid');
       const callB = exchangeTokenRfc8693(user, 'user-access-token', 'openid');
@@ -434,14 +447,10 @@ describe('TokenExchangeService (RFC 8693)', () => {
     });
 
     it('does not coalesce different audiences', async () => {
-      let resolveFirst;
       client.genericGrantRequest
-        .mockReturnValueOnce(
-          new Promise((resolve) => {
-            resolveFirst = resolve;
-          }),
-        )
+        .mockReturnValueOnce(deferredGrant())
         .mockResolvedValueOnce({ access_token: 'token-b', expires_in: 600 });
+      const resolveFirst = pendingGrants[pendingGrants.length - 1];
 
       const callA = exchangeTokenRfc8693(user, 'user-access-token', 'openid');
       await flushMicrotasks();
