@@ -20,7 +20,12 @@
 # be built by the `dii` user directly, because node_modules and packages/api/dist
 # are root-owned from a container run in July, and gorion has no local node. It
 # builds fine in a container in about two seconds. Everything below therefore runs
-# in docker, pinned to the same Node upstream CI pins (24.16.0).
+# in a container, pinned to the same Node upstream CI pins (24.16.0).
+#
+# The container runs under rootless Podman when it is installed (gorion since
+# 2026-11-11, chanter 4fvda: the docker group was a root route for every session).
+# Root inside it is `dii` outside, so what the build writes stays dii's. Set
+# CONTAINER=docker to force Docker.
 #
 # WHICH NODE IMAGE, and why it is not the one production runs.
 #
@@ -52,7 +57,8 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-NODE_IMAGE="node:24.16.0"
+NODE_IMAGE="docker.io/library/node:24.16.0"
+CONTAINER="${CONTAINER:-$(command -v podman >/dev/null 2>&1 && echo podman || echo docker)}"
 BASELINE_DIR="${REPO}/docs/candlekeep/test-baselines"
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -62,7 +68,7 @@ bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 # --security-opt label=disable is required on this SELinux host or every mounted
 # read fails with EACCES; it is the same flag the custom-image runbook uses.
 in_node() {
-  docker run --rm --security-opt label=disable -v "${REPO}:/app" -w "/app${1:+/$1}" \
+  "${CONTAINER}" run --rm --security-opt label=disable -v "${REPO}:/app" -w "/app${1:+/$1}" \
     "${NODE_IMAGE}" sh -c "$2"
 }
 
