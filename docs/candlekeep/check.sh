@@ -17,8 +17,9 @@
 # so THE BUILD IS THE TEST, and it is the step this script exists to make routine.
 #
 # The second belief this corrects: the bundle is not unbuildable here. It cannot
-# be built by the `dii` user directly, because node_modules and packages/api/dist
-# are root-owned from a container run in July, and gorion has no local node. It
+# be built by the `dii` user directly, because gorion has no local node (and until
+# 2026-11-11 node_modules and packages/api/dist were root-owned from root-run
+# containers; they were handed back to `dii` when Docker left gorion). It
 # builds fine in a container in about two seconds. Everything below therefore runs
 # in a container, pinned to the same Node upstream CI pins (24.16.0).
 #
